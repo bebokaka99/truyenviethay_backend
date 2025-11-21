@@ -3,7 +3,7 @@ const db = require('../config/db');
 const { createNotificationInternal } = require('./notificationController');
 
 // ============================================================
-// HELPER: CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (Dùng chung cho cả hệ thống)
+// HELPER: CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (Dùng chung)
 // ============================================================
 const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
     try {
@@ -11,8 +11,6 @@ const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
         const [quests] = await db.execute("SELECT * FROM quests WHERE action_type = ?", [actionType]);
         
         if (quests.length === 0) return;
-
-        const today = new Date().toISOString().slice(0, 10);
 
         // 2. Duyệt qua từng nhiệm vụ tìm được để cập nhật
         for (const quest of quests) {
@@ -43,13 +41,13 @@ const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
                 const record = existing[0];
                 let shouldReset = false;
 
-                // Logic Reset dựa trên loại nhiệm vụ
+                // Logic Reset dựa trên loại nhiệm vụ (ENUM: 'daily', 'weekly', 'achievement')
                 if (quest.type === 'daily' && record.days_diff !== 0) {
                     shouldReset = true; // Khác ngày -> Reset
                 } else if (quest.type === 'weekly' && record.weeks_diff !== 0) {
                     shouldReset = true; // Khác tuần -> Reset
                 }
-                // achievement: Không bao giờ reset
+                // quest.type === 'achievement': Không bao giờ reset
                 
                 if (shouldReset) {
                     newCount = incrementAmount; 
@@ -63,13 +61,14 @@ const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
                     newClaimed = record.is_claimed;
                     
                     // Chỉ tăng nếu chưa max hoặc là achievement (tích lũy)
+                    // Hoặc tăng đến khi đạt target để user nhận thưởng
                     if (newCount < quest.target_count || quest.type === 'achievement') {
                         newCount += incrementAmount;
                         needUpdate = true;
                         
                         // Check nếu vừa cán mốc target và chưa nhận thưởng
                         if (newCount >= quest.target_count && record.current_count < quest.target_count && newClaimed === 0) {
-                            isFirstTimeComplete = true;
+                            isFirstComplete = true;
                         }
                     }
                 }
@@ -82,11 +81,11 @@ const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
                 }
             }
 
-            // 3. Bắn thông báo nếu hoàn thành
+            // 3. Bắn thông báo nếu hoàn thành lần đầu tiên trong chu kỳ
             if (isFirstComplete) {
                  await createNotificationInternal(
                     userId, 
-                    'quest', 
+                    'quest', // ENUM type cho notifications
                     'Nhiệm vụ hoàn thành!', 
                     `Bạn đã hoàn thành: ${quest.name}. Hãy vào trang hồ sơ nhận thưởng!`, 
                     '/profile?tab=tasks'
@@ -98,7 +97,7 @@ const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
     }
 };
 
-// Export helper để AuthController và CommentController sử dụng
+// Export helper để các Controller khác sử dụng
 exports.updateQuestProgress = updateQuestProgress;
 
 
@@ -164,8 +163,7 @@ exports.saveHistory = async (req, res) => {
         );
 
         // 2. Cập nhật Nhiệm vụ Đọc
-        // Gọi helper với action_type = 'read', hệ thống sẽ tự tìm các quest như daily_read, weekly_read...
-        // Không dùng await để tránh block phản hồi về client
+        // Gọi helper với action_type = 'read'
         updateQuestProgress(userId, 'read', 1).catch(err => console.error("Quest Update Error:", err));
         
         res.status(200).json({ message: 'Đã lưu lịch sử' });
@@ -178,6 +176,7 @@ exports.saveHistory = async (req, res) => {
 exports.getHistory = async (req, res) => {
     const userId = req.user.id;
     try {
+        // Lấy 50 dòng gần nhất
         const [rows] = await db.execute('SELECT * FROM reading_history WHERE user_id = ? ORDER BY read_at DESC LIMIT 50', [userId]);
         res.json(rows);
     } catch (error) { res.status(500).json({ message: 'Lỗi server' }); }
@@ -270,7 +269,7 @@ exports.banUser = async (req, res) => {
 exports.unbanUser = async (req, res) => { 
     try { await db.execute("UPDATE users SET status = 'active', ban_expires_at = NULL WHERE id = ?", [req.params.id]); res.json({message:'Đã mở khóa'}); } catch(e) { res.status(500).json({message:'Lỗi'}); } 
 };
-// 15. [ADMIN] Lấy danh sách truyện đang được quản lý (đã chỉnh sửa)
+
 exports.getManagedComics = async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT * FROM comic_settings ORDER BY updated_at DESC');
@@ -280,11 +279,9 @@ exports.getManagedComics = async (req, res) => {
     }
 };
 
-// 16. [ADMIN] Cập nhật trạng thái truyện (Ẩn/Hiện/Đề cử)
 exports.updateComicSetting = async (req, res) => {
     const { slug, name, is_hidden, is_recommended } = req.body;
     try {
-        // Dùng UPSERT (Insert nếu chưa có, Update nếu có rồi)
         await db.execute(`
             INSERT INTO comic_settings (slug, name, is_hidden, is_recommended) 
             VALUES (?, ?, ?, ?)
@@ -300,13 +297,10 @@ exports.updateComicSetting = async (req, res) => {
         res.status(500).json({ message: 'Lỗi server' });
     }
 };
-// 17. [PUBLIC] Lấy danh sách cấu hình truyện (HOT / HIDDEN)
+
 exports.getPublicComicSettings = async (req, res) => {
     try {
-        // Chỉ lấy slug và trạng thái
         const [rows] = await db.execute('SELECT slug, is_hidden, is_recommended FROM comic_settings');
-        
-        // Chuyển đổi sang object cho dễ tra cứu ở frontend: { "slug-truyen": { is_hot: 1, is_hidden: 0 } }
         const settingsMap = {};
         rows.forEach(row => {
             settingsMap[row.slug] = {
@@ -314,7 +308,6 @@ exports.getPublicComicSettings = async (req, res) => {
                 is_hidden: row.is_hidden === 1
             };
         });
-        
         res.json(settingsMap);
     } catch (error) {
         console.error(error);
