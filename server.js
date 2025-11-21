@@ -21,13 +21,13 @@ app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Đăng ký Routes
-app.use('/auth', authRoutes);
-app.use('/user', userRoutes);
-app.use('/notifications', notificationRoutes);
-app.use('/quests', questRoutes);
-app.use('/comments', commentRoutes);
-app.use('/reports', reportRoutes);
-app.use('/rating', ratingRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/user', userRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/quests', questRoutes);
+app.use('/api/comments', commentRoutes);
+app.use('/api/reports', reportRoutes);
+app.use('/api/rating', ratingRoutes);
 
 app.get('/', (req, res) => {
     res.send('Backend Node.js đang chạy ổn định!');
