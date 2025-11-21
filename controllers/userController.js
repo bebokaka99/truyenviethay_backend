@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
 const db = require('../config/db');
+const axios = require('axios'); // Thư viện để gọi API Otruyen
 const { createNotificationInternal } = require('./notificationController');
 
 // ============================================================
@@ -87,7 +88,7 @@ exports.updateQuestProgress = updateQuestProgress;
 
 
 // ============================================================
-// LIBRARY (TỦ TRUYỆN)
+// LIBRARY (TỦ TRUYỆN) - ĐÃ CẬP NHẬT ĐỂ LẤY LIVE DATA
 // ============================================================
 
 exports.addToLibrary = async (req, res) => {
@@ -95,8 +96,7 @@ exports.addToLibrary = async (req, res) => {
     const { comic_slug, comic_name, comic_image, latest_chapter } = req.body;
     
     try {
-        // Sử dụng ON DUPLICATE KEY UPDATE để cập nhật thông tin nếu đã tồn tại
-        // Cập nhật created_at = NOW() để truyện này nhảy lên đầu danh sách khi sắp xếp
+        // Cập nhật created_at = NOW() để khi sort theo DB vẫn đúng thứ tự mới lưu
         await db.execute(
             `INSERT INTO library (user_id, comic_slug, comic_name, comic_image, latest_chapter, created_at) 
              VALUES (?, ?, ?, ?, ?, NOW()) 
@@ -122,13 +122,57 @@ exports.removeFromLibrary = async (req, res) => {
     } catch (error) { res.status(500).json({ message: 'Lỗi server' }); }
 };
 
+// [QUAN TRỌNG] Hàm này đã được sửa để lấy dữ liệu LIVE từ API Otruyen
 exports.getLibrary = async (req, res) => {
     const userId = req.user.id;
     try {
-        // Sắp xếp theo created_at (hoặc updated_at) giảm dần để truyện mới lưu/đọc lên đầu
-        const [rows] = await db.execute('SELECT * FROM library WHERE user_id = ? ORDER BY created_at DESC', [userId]);
-        res.json(rows);
-    } catch (error) { res.status(500).json({ message: 'Lỗi server' }); }
+        // 1. Lấy danh sách từ DB
+        const [libraryComics] = await db.execute('SELECT * FROM library WHERE user_id = ? ORDER BY created_at DESC', [userId]);
+
+        if (libraryComics.length === 0) {
+            return res.json([]);
+        }
+
+        // 2. Gọi API Otruyen để lấy thông tin mới nhất (Chương mới, thời gian update)
+        const enrichedLibrary = await Promise.all(libraryComics.map(async (comic) => {
+            try {
+                const apiRes = await axios.get(`https://otruyenapi.com/v1/api/truyen-tranh/${comic.comic_slug}`);
+                const apiData = apiRes.data.data.item;
+
+                // Tìm chương mới nhất
+                let latestChap = 'Đang cập nhật';
+                if (apiData.chapters && apiData.chapters.length > 0) {
+                    const serverData = apiData.chapters[0].server_data;
+                    if (serverData && serverData.length > 0) {
+                        latestChap = serverData[serverData.length - 1].chapter_name;
+                    }
+                }
+
+                return {
+                    ...comic,
+                    latest_chapter: latestChap,         // Ghi đè bằng chương mới nhất thực tế
+                    updated_at: apiData.updatedAt,      // Thời gian cập nhật thực tế
+                    comic_name: apiData.name,           // Cập nhật tên mới nhất
+                    comic_image: `https://img.otruyenapi.com/uploads/comics/${apiData.thumb_url}` // Cập nhật ảnh mới nhất
+                };
+            } catch (err) {
+                // Nếu lỗi API (truyện bị xóa hoặc lỗi mạng), dùng dữ liệu cũ trong DB
+                console.error(`Lỗi fetch Otruyen ${comic.comic_slug}:`, err.message);
+                return {
+                    ...comic,
+                    updated_at: comic.created_at // Fallback thời gian
+                };
+            }
+        }));
+
+        // 3. Sắp xếp: Truyện mới cập nhật lên đầu
+        enrichedLibrary.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+
+        res.json(enrichedLibrary);
+    } catch (error) { 
+        console.error("Lỗi getLibrary:", error);
+        res.status(500).json({ message: 'Lỗi server' }); 
+    }
 };
 
 exports.checkFollowStatus = async (req, res) => {
@@ -150,9 +194,7 @@ exports.saveHistory = async (req, res) => {
     const { comic_slug, comic_name, comic_image, chapter_name } = req.body;
     
     try {
-        // 1. Logic để CHỈ GIỮ 1 DÒNG LỊCH SỬ DUY NHẤT cho mỗi truyện
-        
-        // Cách 1: Nếu DB đã có UNIQUE KEY (user_id, comic_slug) -> Dùng INSERT ... ON DUPLICATE
+        // Logic CHỈ GIỮ 1 DÒNG DUY NHẤT cho mỗi truyện
         await db.execute(
             `INSERT INTO reading_history (user_id, comic_slug, comic_name, comic_image, chapter_name, read_at) 
              VALUES (?, ?, ?, ?, ?, NOW()) 
@@ -163,19 +205,7 @@ exports.saveHistory = async (req, res) => {
             [userId, comic_slug, comic_name, comic_image, chapter_name]
         );
 
-        /* LƯU Ý: Nếu database của bạn CHƯA có khóa duy nhất (Unique Key) cho (user_id, comic_slug),
-           bạn nên dùng cách 2 dưới đây để tránh dư thừa dữ liệu (Chap 1, Chap 2...):
-           
-           // Cách 2 (Thủ công - An toàn): Xóa cũ rồi thêm mới
-           await db.execute('DELETE FROM reading_history WHERE user_id = ? AND comic_slug = ?', [userId, comic_slug]);
-           await db.execute(
-               `INSERT INTO reading_history (user_id, comic_slug, comic_name, comic_image, chapter_name, read_at) 
-                VALUES (?, ?, ?, ?, ?, NOW())`,
-               [userId, comic_slug, comic_name, comic_image, chapter_name]
-           );
-        */
-
-        // 2. Cập nhật Nhiệm vụ Đọc
+        // Cập nhật Nhiệm vụ Đọc
         updateQuestProgress(userId, 'read', 1).catch(err => console.error("Quest Update Error:", err));
         
         res.status(200).json({ message: 'Đã lưu lịch sử' });
@@ -188,7 +218,6 @@ exports.saveHistory = async (req, res) => {
 exports.getHistory = async (req, res) => {
     const userId = req.user.id;
     try {
-        // Lấy 50 dòng mới nhất
         const [rows] = await db.execute('SELECT * FROM reading_history WHERE user_id = ? ORDER BY read_at DESC LIMIT 50', [userId]);
         res.json(rows);
     } catch (error) { res.status(500).json({ message: 'Lỗi server' }); }
