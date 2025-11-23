@@ -9,16 +9,20 @@ const { updateQuestProgress } = require('./userController');
 // --- CẤU HÌNH GỬI MAIL ---
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
-    port: 465,            // Sử dụng cổng 465 (SSL) thay vì 587
-    secure: true,         // true cho cổng 465, false cho các cổng khác
+    port: 587,             // Dùng cổng 587 (TLS) thay vì 465 (SSL)
+    secure: false,         // Phải để false khi dùng cổng 587
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
-    // Thêm các tùy chọn timeout để tránh treo server quá lâu
-    connectionTimeout: 10000, // 10 giây
-    greetingTimeout: 5000,    // 5 giây
-    socketTimeout: 10000      // 10 giây
+    tls: {
+        // Quan trọng: Bỏ qua lỗi chứng chỉ SSL (nếu Render chặn check)
+        rejectUnauthorized: false
+    },
+    // Tăng thời gian timeout lên để tránh lỗi ETIMEDOUT sớm
+    connectionTimeout: 20000, // 20 giây
+    greetingTimeout: 20000,   // 20 giây
+    socketTimeout: 20000      // 20 giây
 });
 
 // --- LOGIC ĐIỂM DANH & STREAK (Đã Fix) ---
