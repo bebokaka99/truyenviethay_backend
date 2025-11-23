@@ -38,11 +38,9 @@ const handleLoginStreaks = async (userId) => {
         // 3. Cập nhật Nhiệm vụ (Quan trọng)
         
         // A. Daily Login: Luôn gọi, hàm helper sẽ tự check reset nếu cần
-        // Type: 'login', Val: 1 (để đếm số lần login/ngày - nhưng helper đã chặn spam rồi)
         await updateQuestProgress(userId, 'login', 1); 
 
         // B. Weekly Streak: Truyền giá trị streak thực tế vào
-        // Helper sẽ so sánh nếu newStreak khác giá trị cũ trong user_quests thì mới update
         await updateQuestProgress(userId, 'streak', newStreak);
 
     } catch (error) {
@@ -77,15 +75,24 @@ exports.register = async (req, res) => {
     }
 };
 
-// --- ĐĂNG NHẬP ---
+// --- ĐĂNG NHẬP (HỖ TRỢ EMAIL HOẶC USERNAME) ---
 exports.login = async (req, res) => {
-    const { email, password } = req.body;
+    // Frontend sẽ gửi lên 'identifier' thay vì 'email'
+    // Nhưng để tương thích ngược, ta check cả 'email'
+    const { identifier, email, password } = req.body;
+    
+    // Ưu tiên identifier (mới), nếu không có thì dùng email (cũ)
+    const loginKey = identifier || email;
 
     try {
-        const [users] = await db.execute('SELECT id, username, email, full_name, avatar, role, exp, rank_style, password, status, ban_expires_at FROM users WHERE email = ?', [email]);
+        // SỬA QUERY: Tìm theo email HOẶC username
+        const [users] = await db.execute(
+            'SELECT id, username, email, full_name, avatar, role, exp, rank_style, password, status, ban_expires_at FROM users WHERE email = ? OR username = ?', 
+            [loginKey, loginKey]
+        );
         
         if (users.length === 0) {
-            return res.status(400).json({ message: 'Email không tồn tại!' });
+            return res.status(400).json({ message: 'Tài khoản không tồn tại!' });
         }
 
         const user = users[0];
