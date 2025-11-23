@@ -1,26 +1,49 @@
 const db = require('../config/db');
 
-// 1. GỬI ĐÁNH GIÁ
 exports.submitRating = async (req, res) => {
     const userId = req.user.id;
     const { comic_slug, score } = req.body;
 
+    // Validate
     if (!score || isNaN(score) || score < 0.5 || score > 5) {
-        return res.status(400).json({ message: 'Điểm đánh giá không hợp lệ (0.5 - 5.0)' });
+        return res.status(400).json({ message: 'Điểm đánh giá không hợp lệ' });
     }
 
     try {
-
-        await db.execute(
-            `INSERT INTO ratings (user_id, comic_slug, score, created_at) 
-             VALUES (?, ?, ?, NOW())
-             ON DUPLICATE KEY UPDATE 
-                score = VALUES(score),
-                created_at = NOW()`, 
-            [userId, comic_slug, score]
+        // BƯỚC 1: Kiểm tra xem user đã đánh giá truyện này chưa
+        const [existing] = await db.execute(
+            'SELECT id FROM ratings WHERE user_id = ? AND comic_slug = ?',
+            [userId, comic_slug]
         );
+
+        if (existing.length > 0) {
+            // --- TRƯỜNG HỢP 1: ĐÃ CÓ -> CẬP NHẬT (UPDATE) ---
+            await db.execute(
+                'UPDATE ratings SET score = ?, created_at = NOW() WHERE id = ?',
+                [score, existing[0].id]
+            );
+        } else {
+            // --- TRƯỜNG HỢP 2: CHƯA CÓ -> THÊM MỚI (INSERT) ---
+            try {
+                await db.execute(
+                    'INSERT INTO ratings (user_id, comic_slug, score, created_at) VALUES (?, ?, ?, NOW())',
+                    [userId, comic_slug, score]
+                );
+            } catch (insertError) {
+                // Phòng trường hợp race condition (vừa check chưa có, nhưng 1ms sau đã có)
+                // Nếu lỗi là trùng lặp (Duplicate entry), ta quay lại Update
+                if (insertError.code === 'ER_DUP_ENTRY') {
+                    await db.execute(
+                        'UPDATE ratings SET score = ?, created_at = NOW() WHERE user_id = ? AND comic_slug = ?',
+                        [score, userId, comic_slug]
+                    );
+                } else {
+                    throw insertError; // Lỗi khác thì ném ra ngoài
+                }
+            }
+        }
         
-        // Tính toán lại điểm trung bình THỰC TẾ của truyện này ngay lập tức để trả về UI
+        // BƯỚC 3: Tính toán lại điểm trung bình để trả về Frontend
         const [avgRows] = await db.execute(
             'SELECT AVG(score) as avg_score, COUNT(*) as total_votes FROM ratings WHERE comic_slug = ?', 
             [comic_slug]
@@ -40,7 +63,6 @@ exports.submitRating = async (req, res) => {
         res.status(500).json({ message: 'Lỗi server khi đánh giá' });
     }
 };
-
 // 2. LẤY THÔNG TIN ĐÁNH GIÁ (Của truyện & Của User)
 exports.getComicRating = async (req, res) => {
     const { comic_slug } = req.params;
