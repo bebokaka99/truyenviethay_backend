@@ -5,7 +5,7 @@ const { createNotificationInternal } = require('./notificationController');
 // Import helper updateQuestProgress
 const { updateQuestProgress } = require('./userController'); 
 
-// --- LOGIC ĐIỂM DANH & STREAK (Logic Đã Fix) ---
+// --- LOGIC ĐIỂM DANH & STREAK (Đã Fix) ---
 const handleLoginStreaks = async (userId) => {
     try {
         // 1. Lấy thông tin đăng nhập lần cuối
@@ -20,17 +20,17 @@ const handleLoginStreaks = async (userId) => {
 
         // Logic tính toán Streak
         if (diff === 0) {
-            // Đã login hôm nay -> Giữ nguyên
+            // Đã login hôm nay -> Giữ nguyên streak cũ
             newStreak = user.login_streak;
         } else if (diff === 1) {
-            // Login liên tiếp -> Tăng 1
+            // Login liên tiếp (hôm qua có login) -> Tăng 1
             newStreak = user.login_streak + 1;
         } else {
-            // Mất chuỗi (diff > 1) hoặc lần đầu (diff null) -> Reset về 1
+            // Mất chuỗi hoặc lần đầu -> Reset về 1
             newStreak = 1;
         }
 
-        // 2. Cập nhật bảng Users (Chỉ khi là ngày mới)
+        // 2. Cập nhật bảng Users (Chỉ update nếu là ngày mới)
         if (diff !== 0) {
             await db.execute("UPDATE users SET login_streak = ?, last_login_date = CURRENT_DATE() WHERE id = ?", [newStreak, userId]);
         }
@@ -38,9 +38,11 @@ const handleLoginStreaks = async (userId) => {
         // 3. Cập nhật Nhiệm vụ (Quan trọng)
         
         // A. Daily Login: Luôn gọi, hàm helper sẽ tự check reset nếu cần
+        // Type: 'login', Val: 1 (để đếm số lần login/ngày - nhưng helper đã chặn spam rồi)
         await updateQuestProgress(userId, 'login', 1); 
 
         // B. Weekly Streak: Truyền giá trị streak thực tế vào
+        // Helper sẽ so sánh nếu newStreak khác giá trị cũ trong user_quests thì mới update
         await updateQuestProgress(userId, 'streak', newStreak);
 
     } catch (error) {
@@ -108,7 +110,7 @@ exports.login = async (req, res) => {
             return res.status(400).json({ message: 'Mật khẩu không đúng!' });
         }
         
-        // 4. Kích hoạt logic điểm danh & streak
+        // 4. Kích hoạt logic điểm danh & streak (Chỉ cho User)
         if (user.role === 'user') {
             await handleLoginStreaks(user.id);
         }
