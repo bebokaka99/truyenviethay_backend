@@ -1,22 +1,20 @@
 const bcrypt = require('bcryptjs');
 const db = require('../config/db');
-const axios = require('axios'); // Thư viện để gọi API Otruyen
+const axios = require('axios'); 
 const { createNotificationInternal } = require('./notificationController');
 
 // ============================================================
-// HELPER: CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (Dùng chung)
+// HELPER: CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (Dùng chung - Logic Đã Fix)
 // ============================================================
-const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
+const updateQuestProgress = async (userId, actionType, val = 1) => {
     try {
-        // 1. Tìm tất cả nhiệm vụ khớp với hành động
+        // Tìm tất cả nhiệm vụ khớp với hành động
         const [quests] = await db.execute("SELECT * FROM quests WHERE action_type = ?", [actionType]);
-        
         if (quests.length === 0) return;
 
-        // 2. Duyệt qua từng nhiệm vụ
         for (const quest of quests) {
             const [existing] = await db.execute(
-                `SELECT id, current_count, is_claimed, 
+                `SELECT id, current_count, is_claimed, last_updated,
                         DATEDIFF(CURRENT_DATE(), last_updated) as days_diff,
                         YEARWEEK(CURRENT_DATE(), 1) - YEARWEEK(last_updated, 1) as weeks_diff
                  FROM user_quests WHERE user_id = ? AND quest_id = ?`, 
@@ -29,53 +27,76 @@ const updateQuestProgress = async (userId, actionType, incrementAmount = 1) => {
             let isFirstComplete = false;
 
             if (existing.length === 0) {
-                newCount = incrementAmount;
+                // --- CHƯA LÀM BAO GIỜ -> TẠO MỚI ---
+                newCount = val; 
                 if (newCount >= quest.target_count) isFirstComplete = true;
                 
                 await db.execute(
-                    "INSERT INTO user_quests (user_id, quest_id, current_count, is_claimed, last_updated) VALUES (?, ?, ?, 0, CURRENT_DATE())",
+                    "INSERT INTO user_quests (user_id, quest_id, current_count, is_claimed, last_updated) VALUES (?, ?, ?, 0, NOW())",
                     [userId, quest.id, newCount]
                 );
             } else {
+                // --- ĐÃ CÓ DỮ LIỆU -> CẬP NHẬT ---
                 const record = existing[0];
-                let shouldReset = false;
-
-                if (quest.type === 'daily' && record.days_diff !== 0) shouldReset = true;
-                else if (quest.type === 'weekly' && record.weeks_diff !== 0) shouldReset = true;
                 
-                if (shouldReset) {
-                    newCount = incrementAmount; 
-                    newClaimed = 0;
+                // 1. Xử lý Reset theo chu kỳ
+                let isReset = false;
+                if (quest.type === 'daily' && record.days_diff !== 0) isReset = true;
+                if (quest.type === 'weekly' && record.weeks_diff !== 0) isReset = true;
+
+                if (isReset) {
+                    // Reset: Bắt đầu chu kỳ mới
+                    if (quest.quest_key === 'weekly_streak') {
+                         newCount = val; // Streak giữ nguyên giá trị thực tế truyền vào
+                    } else {
+                         newCount = (quest.action_type === 'login') ? 1 : val; 
+                    }
+                    newClaimed = 0; 
                     needUpdate = true;
-                    if (newCount >= quest.target_count) isFirstComplete = true;
                 } else {
-                    newCount = record.current_count;
+                    // Cùng chu kỳ: Cộng dồn hoặc Giữ nguyên
                     newClaimed = record.is_claimed;
                     
-                    if (newCount < quest.target_count || quest.type === 'achievement') {
-                        newCount += incrementAmount;
-                        needUpdate = true;
-                        if (newCount >= quest.target_count && record.current_count < quest.target_count && newClaimed === 0) {
-                            isFirstComplete = true;
+                    if (quest.action_type === 'login') {
+                        // LOGIN: Idempotent trong ngày
+                        newCount = record.current_count; 
+                        if (quest.quest_key === 'weekly_streak') {
+                            if (newCount !== val) {
+                                newCount = val;
+                                needUpdate = true;
+                            }
                         }
+                    } else {
+                        // READ/COMMENT: Cộng dồn
+                        if (record.current_count < quest.target_count || quest.type === 'achievement') {
+                            newCount = record.current_count + val;
+                            needUpdate = true;
+                        } else {
+                            newCount = record.current_count;
+                        }
+                    }
+                }
+
+                // Kiểm tra hoàn thành
+                if (newCount >= quest.target_count && newClaimed === 0) {
+                    if (isReset || record.current_count < quest.target_count) {
+                        isFirstComplete = true;
                     }
                 }
 
                 if (needUpdate) {
                     await db.execute(
-                        "UPDATE user_quests SET current_count = ?, is_claimed = ?, last_updated = CURRENT_DATE() WHERE id = ?",
+                        "UPDATE user_quests SET current_count = ?, is_claimed = ?, last_updated = NOW() WHERE id = ?",
                         [newCount, newClaimed, record.id]
                     );
                 }
             }
 
+            // Gửi thông báo
             if (isFirstComplete) {
                  await createNotificationInternal(
-                    userId, 
-                    'quest', 
-                    'Nhiệm vụ hoàn thành!', 
-                    `Bạn đã hoàn thành: ${quest.name}. Hãy vào trang hồ sơ nhận thưởng!`, 
-                    '/profile?tab=tasks'
+                    userId, 'quest', 'Nhiệm vụ hoàn thành!', 
+                    `Bạn đã hoàn thành: ${quest.name}. Nhận thưởng ngay!`, '/profile?tab=tasks'
                 );
             }
         }
@@ -88,7 +109,7 @@ exports.updateQuestProgress = updateQuestProgress;
 
 
 // ============================================================
-// LIBRARY (TỦ TRUYỆN) - ĐÃ CẬP NHẬT ĐỂ LẤY LIVE DATA
+// LIBRARY (TỦ TRUYỆN)
 // ============================================================
 
 exports.addToLibrary = async (req, res) => {
@@ -96,7 +117,6 @@ exports.addToLibrary = async (req, res) => {
     const { comic_slug, comic_name, comic_image, latest_chapter } = req.body;
     
     try {
-        // Cập nhật created_at = NOW() để khi sort theo DB vẫn đúng thứ tự mới lưu
         await db.execute(
             `INSERT INTO library (user_id, comic_slug, comic_name, comic_image, latest_chapter, created_at) 
              VALUES (?, ?, ?, ?, ?, NOW()) 
@@ -122,24 +142,20 @@ exports.removeFromLibrary = async (req, res) => {
     } catch (error) { res.status(500).json({ message: 'Lỗi server' }); }
 };
 
-// [QUAN TRỌNG] Hàm này đã được sửa để lấy dữ liệu LIVE từ API Otruyen
 exports.getLibrary = async (req, res) => {
     const userId = req.user.id;
     try {
-        // 1. Lấy danh sách từ DB
         const [libraryComics] = await db.execute('SELECT * FROM library WHERE user_id = ? ORDER BY created_at DESC', [userId]);
 
         if (libraryComics.length === 0) {
             return res.json([]);
         }
 
-        // 2. Gọi API Otruyen để lấy thông tin mới nhất (Chương mới, thời gian update)
         const enrichedLibrary = await Promise.all(libraryComics.map(async (comic) => {
             try {
                 const apiRes = await axios.get(`https://otruyenapi.com/v1/api/truyen-tranh/${comic.comic_slug}`);
                 const apiData = apiRes.data.data.item;
 
-                // Tìm chương mới nhất
                 let latestChap = 'Đang cập nhật';
                 if (apiData.chapters && apiData.chapters.length > 0) {
                     const serverData = apiData.chapters[0].server_data;
@@ -150,22 +166,20 @@ exports.getLibrary = async (req, res) => {
 
                 return {
                     ...comic,
-                    latest_chapter: latestChap,         // Ghi đè bằng chương mới nhất thực tế
-                    updated_at: apiData.updatedAt,      // Thời gian cập nhật thực tế
-                    comic_name: apiData.name,           // Cập nhật tên mới nhất
-                    comic_image: `https://img.otruyenapi.com/uploads/comics/${apiData.thumb_url}` // Cập nhật ảnh mới nhất
+                    latest_chapter: latestChap,
+                    updated_at: apiData.updatedAt,
+                    comic_name: apiData.name,
+                    comic_image: `https://img.otruyenapi.com/uploads/comics/${apiData.thumb_url}`
                 };
             } catch (err) {
-                // Nếu lỗi API (truyện bị xóa hoặc lỗi mạng), dùng dữ liệu cũ trong DB
                 console.error(`Lỗi fetch Otruyen ${comic.comic_slug}:`, err.message);
                 return {
                     ...comic,
-                    updated_at: comic.created_at // Fallback thời gian
+                    updated_at: comic.created_at
                 };
             }
         }));
 
-        // 3. Sắp xếp: Truyện mới cập nhật lên đầu
         enrichedLibrary.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
 
         res.json(enrichedLibrary);
@@ -194,7 +208,6 @@ exports.saveHistory = async (req, res) => {
     const { comic_slug, comic_name, comic_image, chapter_name } = req.body;
     
     try {
-        // Logic CHỈ GIỮ 1 DÒNG DUY NHẤT cho mỗi truyện
         await db.execute(
             `INSERT INTO reading_history (user_id, comic_slug, comic_name, comic_image, chapter_name, read_at) 
              VALUES (?, ?, ?, ?, ?, NOW()) 
