@@ -8,11 +8,17 @@ const { updateQuestProgress } = require('./userController');
 
 // --- CẤU HÌNH GỬI MAIL ---
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: "smtp.gmail.com",
+    port: 465,            // Sử dụng cổng 465 (SSL) thay vì 587
+    secure: true,         // true cho cổng 465, false cho các cổng khác
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
-    }
+    },
+    // Thêm các tùy chọn timeout để tránh treo server quá lâu
+    connectionTimeout: 10000, // 10 giây
+    greetingTimeout: 5000,    // 5 giây
+    socketTimeout: 10000      // 10 giây
 });
 
 // --- LOGIC ĐIỂM DANH & STREAK (Đã Fix) ---
