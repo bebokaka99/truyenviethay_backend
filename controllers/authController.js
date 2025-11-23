@@ -6,23 +6,32 @@ const { createNotificationInternal } = require('./notificationController');
 // Import helper updateQuestProgress
 const { updateQuestProgress } = require('./userController'); 
 
-// --- CẤU HÌNH GỬI MAIL ---
+// --- CẤU HÌNH GỬI MAIL (FIX LỖI TIMEOUT RENDER - STARTTLS) ---
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
-    port: 587,             // Sử dụng cổng 587 (thay vì 465)
-    secure: false,         // Bắt buộc là false với port 587 (nó sẽ tự nâng cấp lên bảo mật sau)
+    port: 587,             // BẮT BUỘC dùng cổng 587 trên Render
+    secure: false,         // secure: false (để dùng STARTTLS)
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
     tls: {
-        // Quan trọng: Giúp bỏ qua các lỗi xác thực chứng chỉ SSL khắt khe trên server Linux
+        // Quan trọng: Bỏ qua lỗi chứng chỉ SSL (Self-signed certificate error) thường gặp trên Linux
         rejectUnauthorized: false
     },
     // Tăng timeout để tránh bị ngắt kết nối quá sớm
     connectionTimeout: 20000, // 20 giây
     greetingTimeout: 20000,   // 20 giây
     socketTimeout: 20000      // 20 giây
+});
+
+// Kiểm tra kết nối mail ngay khi khởi động (Debug)
+transporter.verify(function (error, success) {
+    if (error) {
+        console.log("❌ Lỗi kết nối Mail Server:", error);
+    } else {
+        console.log("✅ Mail Server đã sẵn sàng!");
+    }
 });
 
 // --- LOGIC ĐIỂM DANH & STREAK (Đã Fix) ---
@@ -155,7 +164,7 @@ exports.login = async (req, res) => {
 };
 
 // ==========================================
-// 1. QUÊN MẬT KHẨU (TEMPLATE EMAIL PRO)
+// 1. QUÊN MẬT KHẨU (GỬI OTP)
 // ==========================================
 exports.forgotPassword = async (req, res) => {
     const { email } = req.body;
@@ -166,13 +175,11 @@ exports.forgotPassword = async (req, res) => {
         const user = users[0];
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         
-        // Tính thời gian hết hạn bằng DB để tránh lệch múi giờ
         await db.execute(
             'INSERT INTO password_resets (email, otp, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))', 
             [email, otp]
         );
 
-        // --- TEMPLATE EMAIL HTML CHUYÊN NGHIỆP ---
         const mailOptions = {
             from: '"TruyenVietHay Security" <no-reply@truyenviethay.com>',
             to: email,
@@ -195,25 +202,15 @@ exports.forgotPassword = async (req, res) => {
                 </head>
                 <body>
                     <div class="container">
-                        <div class="header">
-                            <h1>TruyenVietHay</h1>
-                        </div>
+                        <div class="header"><h1>TruyenVietHay</h1></div>
                         <div class="content">
                             <p>Xin chào <strong>${user.full_name}</strong>,</p>
                             <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Vui lòng sử dụng mã xác nhận bên dưới để hoàn tất quá trình:</p>
-                            
                             <div class="otp-box">${otp}</div>
-                            
                             <p>Mã này sẽ hết hạn sau <strong>15 phút</strong>.</p>
-                            
-                            <div class="warning">
-                                <strong>Lưu ý:</strong> Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này. Tuyệt đối không chia sẻ mã này cho bất kỳ ai.
-                            </div>
+                            <div class="warning"><strong>Lưu ý:</strong> Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này. Tuyệt đối không chia sẻ mã này cho bất kỳ ai.</div>
                         </div>
-                        <div class="footer">
-                            &copy; ${new Date().getFullYear()} TruyenVietHay. All rights reserved.<br>
-                            Đây là email tự động, vui lòng không trả lời.
-                        </div>
+                        <div class="footer">&copy; ${new Date().getFullYear()} TruyenVietHay. All rights reserved.</div>
                     </div>
                 </body>
                 </html>
@@ -225,7 +222,7 @@ exports.forgotPassword = async (req, res) => {
 
     } catch (error) {
         console.error("Lỗi gửi mail:", error);
-        res.status(500).json({ message: 'Lỗi server.' });
+        res.status(500).json({ message: 'Lỗi server khi gửi mail.' });
     }
 };
 
