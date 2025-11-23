@@ -9,17 +9,17 @@ const { updateQuestProgress } = require('./userController');
 // --- CẤU HÌNH GỬI MAIL ---
 const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
-    port: 587,             // Dùng cổng 587 (TLS) thay vì 465 (SSL)
-    secure: false,         // Phải để false khi dùng cổng 587
+    port: 587,             // Sử dụng cổng 587 (thay vì 465)
+    secure: false,         // Bắt buộc là false với port 587 (nó sẽ tự nâng cấp lên bảo mật sau)
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
     tls: {
-        // Quan trọng: Bỏ qua lỗi chứng chỉ SSL (nếu Render chặn check)
+        // Quan trọng: Giúp bỏ qua các lỗi xác thực chứng chỉ SSL khắt khe trên server Linux
         rejectUnauthorized: false
     },
-    // Tăng thời gian timeout lên để tránh lỗi ETIMEDOUT sớm
+    // Tăng timeout để tránh bị ngắt kết nối quá sớm
     connectionTimeout: 20000, // 20 giây
     greetingTimeout: 20000,   // 20 giây
     socketTimeout: 20000      // 20 giây
