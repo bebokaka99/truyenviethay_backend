@@ -7,23 +7,25 @@ const { updateQuestProgress } = require('./userController');
 
 // --- CẤU HÌNH GỬI MAIL (FIX TIME OUT & IPV6) ---
 const transporter = nodemailer.createTransport({
-    service: 'gmail', // Dùng service mặc định để Nodemailer tự tối ưu
+    host: "smtp-relay.brevo.com", // Máy chủ của Brevo
+    port: 587,                    // Cổng chuẩn của Brevo
+    secure: false,                // false cho cổng 587
     auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
+        user: process.env.EMAIL_USER, // Email tài khoản Brevo
+        pass: process.env.EMAIL_PASS  // SMTP Key của Brevo
     },
     tls: {
-        rejectUnauthorized: false // Bỏ qua lỗi chứng chỉ
-    },
-    // QUAN TRỌNG: Buộc sử dụng IPv4 (Fix lỗi timeout trên Render)
-    family: 4, 
-    // Debug log để xem chi tiết lỗi trong Console Render
-    logger: true,
-    debug: true,
-    // Tăng timeout
-    connectionTimeout: 30000, 
-    greetingTimeout: 30000,
-    socketTimeout: 30000
+        rejectUnauthorized: false // Giúp kết nối mượt hơn trên Linux
+    }
+});
+
+// Kiểm tra kết nối (Debug)
+transporter.verify(function (error, success) {
+    if (error) {
+        console.log("❌ Lỗi kết nối SMTP Brevo:", error);
+    } else {
+        console.log("✅ Kết nối SMTP Brevo thành công!");
+    }
 });
 
 // Kiểm tra kết nối ngay khi khởi động
@@ -120,50 +122,42 @@ exports.forgotPassword = async (req, res) => {
         );
 
         const mailOptions = {
-            from: '"TruyenVietHay Security" <no-reply@truyenviethay.com>',
+            // QUAN TRỌNG: Brevo yêu cầu email người gửi phải trùng với email đăng nhập
+            // Hoặc là Sender đã được xác minh trong dashboard Brevo
+            from: `"TruyenVietHay" <${process.env.EMAIL_USER}>`, 
             to: email,
             subject: '[TruyenVietHay] Mã xác nhận đặt lại mật khẩu',
             html: `
                 <!DOCTYPE html>
                 <html>
                 <head>
-                    <meta charset="UTF-8">
-                    <style>
-                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f7; margin: 0; padding: 0; }
-                        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-top: 40px; }
-                        .header { background-color: #1a1a2e; padding: 30px; text-align: center; }
-                        .header h1 { color: #ffffff; margin: 0; font-size: 24px; letter-spacing: 1px; }
-                        .content { padding: 40px 30px; color: #333333; line-height: 1.6; }
-                        .otp-box { background-color: #f0fdf4; border: 2px dashed #16a34a; color: #16a34a; font-size: 32px; font-weight: bold; text-align: center; padding: 15px; margin: 30px 0; letter-spacing: 8px; border-radius: 8px; }
-                        .warning { font-size: 13px; color: #666666; background-color: #fff7ed; padding: 15px; border-radius: 6px; border-left: 4px solid #f97316; margin-top: 20px; }
-                        .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
-                    </style>
+                   <style>
+                        body { font-family: sans-serif; background-color: #f4f4f7; padding: 20px; }
+                        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+                        .otp { font-size: 32px; font-weight: bold; color: #16a34a; text-align: center; margin: 20px 0; letter-spacing: 5px; }
+                   </style>
                 </head>
                 <body>
                     <div class="container">
-                        <div class="header"><h1>TruyenVietHay</h1></div>
-                        <div class="content">
-                            <p>Xin chào <strong>${user.full_name}</strong>,</p>
-                            <p>Mã xác nhận: <span class="otp-box">${otp}</span></p>
-                            <div class="warning">Mã hết hạn sau 15 phút.</div>
-                        </div>
-                        <div class="footer">&copy; 2024 TruyenVietHay.</div>
+                        <h2>TruyenVietHay - Đặt lại mật khẩu</h2>
+                        <p>Xin chào <strong>${user.full_name}</strong>,</p>
+                        <p>Mã OTP của bạn là:</p>
+                        <div class="otp">${otp}</div>
+                        <p>Mã có hiệu lực trong 15 phút.</p>
                     </div>
                 </body>
                 </html>
             `
         };
 
-        // Gửi mail và chờ kết quả
-        console.log("Đang gửi mail tới:", email);
+        console.log("Đang gửi mail qua Brevo tới:", email);
         await transporter.sendMail(mailOptions);
-        console.log("Gửi mail thành công!");
-        
+        console.log("Gửi thành công!");
         res.json({ message: 'Đã gửi mã OTP!' });
 
     } catch (error) {
-        console.error("CHI TIẾT LỖI MAIL:", error); // Xem log này trong Render nếu lỗi
-        res.status(500).json({ message: 'Lỗi kết nối email server.' });
+        console.error("Lỗi gửi mail:", error);
+        res.status(500).json({ message: 'Lỗi server khi gửi mail.' });
     }
 };
 
