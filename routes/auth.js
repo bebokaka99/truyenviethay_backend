@@ -1,12 +1,30 @@
 const express = require('express');
 const router = express.Router();
-const { register, login } = require('../controllers/authController');
 
-// Định nghĩa đường dẫn
-// POST: http://localhost:5000/api/auth/register
+// 1. Import các hàm từ Controller (Thêm forgotPassword, resetPassword)
+const { 
+    register, 
+    login, 
+    forgotPassword, 
+    resetPassword 
+} = require('../controllers/authController');
+
+// 2. Định nghĩa các Route
+
+// Đăng ký
+// POST /api/auth/register
 router.post('/register', register);
 
-// POST: http://localhost:5000/api/auth/login
+// Đăng nhập
+// POST /api/auth/login
 router.post('/login', login);
+
+// Quên mật khẩu (Gửi OTP)
+// POST /api/auth/forgot-password
+router.post('/forgot-password', forgotPassword);
+
+// Đặt lại mật khẩu (Xác nhận OTP)
+// POST /api/auth/reset-password
+router.post('/reset-password', resetPassword);
 
 module.exports = router;

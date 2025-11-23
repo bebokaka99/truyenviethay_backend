@@ -1,9 +1,19 @@
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
 const { createNotificationInternal } = require('./notificationController');
 // Import helper updateQuestProgress
 const { updateQuestProgress } = require('./userController'); 
+
+// --- CẤU HÌNH GỬI MAIL ---
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
 
 // --- LOGIC ĐIỂM DANH & STREAK (Đã Fix) ---
 const handleLoginStreaks = async (userId) => {
@@ -20,13 +30,10 @@ const handleLoginStreaks = async (userId) => {
 
         // Logic tính toán Streak
         if (diff === 0) {
-            // Đã login hôm nay -> Giữ nguyên streak cũ
             newStreak = user.login_streak;
         } else if (diff === 1) {
-            // Login liên tiếp (hôm qua có login) -> Tăng 1
             newStreak = user.login_streak + 1;
         } else {
-            // Mất chuỗi hoặc lần đầu -> Reset về 1
             newStreak = 1;
         }
 
@@ -35,12 +42,8 @@ const handleLoginStreaks = async (userId) => {
             await db.execute("UPDATE users SET login_streak = ?, last_login_date = CURRENT_DATE() WHERE id = ?", [newStreak, userId]);
         }
 
-        // 3. Cập nhật Nhiệm vụ (Quan trọng)
-        
-        // A. Daily Login: Luôn gọi, hàm helper sẽ tự check reset nếu cần
+        // 3. Cập nhật Nhiệm vụ
         await updateQuestProgress(userId, 'login', 1); 
-
-        // B. Weekly Streak: Truyền giá trị streak thực tế vào
         await updateQuestProgress(userId, 'streak', newStreak);
 
     } catch (error) {
@@ -75,17 +78,12 @@ exports.register = async (req, res) => {
     }
 };
 
-// --- ĐĂNG NHẬP (HỖ TRỢ EMAIL HOẶC USERNAME) ---
+// --- ĐĂNG NHẬP ---
 exports.login = async (req, res) => {
-    // Frontend sẽ gửi lên 'identifier' thay vì 'email'
-    // Nhưng để tương thích ngược, ta check cả 'email'
     const { identifier, email, password } = req.body;
-    
-    // Ưu tiên identifier (mới), nếu không có thì dùng email (cũ)
     const loginKey = identifier || email;
 
     try {
-        // SỬA QUERY: Tìm theo email HOẶC username
         const [users] = await db.execute(
             'SELECT id, username, email, full_name, avatar, role, exp, rank_style, password, status, ban_expires_at FROM users WHERE email = ? OR username = ?', 
             [loginKey, loginKey]
@@ -97,7 +95,6 @@ exports.login = async (req, res) => {
 
         const user = users[0];
 
-        // 2. Kiểm tra BAN
         if (user.status === 'banned') {
             const now = new Date();
             if (user.ban_expires_at) {
@@ -117,7 +114,6 @@ exports.login = async (req, res) => {
             return res.status(400).json({ message: 'Mật khẩu không đúng!' });
         }
         
-        // 4. Kích hoạt logic điểm danh & streak (Chỉ cho User)
         if (user.role === 'user') {
             await handleLoginStreaks(user.id);
         }
@@ -145,5 +141,108 @@ exports.login = async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Lỗi server khi đăng nhập.' });
+    }
+};
+
+// ==========================================
+// 1. QUÊN MẬT KHẨU (TEMPLATE EMAIL PRO)
+// ==========================================
+exports.forgotPassword = async (req, res) => {
+    const { email } = req.body;
+    try {
+        const [users] = await db.execute('SELECT id, full_name FROM users WHERE email = ?', [email]);
+        if (users.length === 0) return res.status(404).json({ message: 'Email không tồn tại trong hệ thống!' });
+
+        const user = users[0];
+        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Tính thời gian hết hạn bằng DB để tránh lệch múi giờ
+        await db.execute(
+            'INSERT INTO password_resets (email, otp, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))', 
+            [email, otp]
+        );
+
+        // --- TEMPLATE EMAIL HTML CHUYÊN NGHIỆP ---
+        const mailOptions = {
+            from: '"TruyenVietHay Security" <no-reply@truyenviethay.com>',
+            to: email,
+            subject: '[TruyenVietHay] Mã xác nhận đặt lại mật khẩu',
+            html: `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="UTF-8">
+                    <style>
+                        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f7; margin: 0; padding: 0; }
+                        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-top: 40px; }
+                        .header { background-color: #1a1a2e; padding: 30px; text-align: center; }
+                        .header h1 { color: #ffffff; margin: 0; font-size: 24px; letter-spacing: 1px; }
+                        .content { padding: 40px 30px; color: #333333; line-height: 1.6; }
+                        .otp-box { background-color: #f0fdf4; border: 2px dashed #16a34a; color: #16a34a; font-size: 32px; font-weight: bold; text-align: center; padding: 15px; margin: 30px 0; letter-spacing: 8px; border-radius: 8px; }
+                        .warning { font-size: 13px; color: #666666; background-color: #fff7ed; padding: 15px; border-radius: 6px; border-left: 4px solid #f97316; margin-top: 20px; }
+                        .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>TruyenVietHay</h1>
+                        </div>
+                        <div class="content">
+                            <p>Xin chào <strong>${user.full_name}</strong>,</p>
+                            <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Vui lòng sử dụng mã xác nhận bên dưới để hoàn tất quá trình:</p>
+                            
+                            <div class="otp-box">${otp}</div>
+                            
+                            <p>Mã này sẽ hết hạn sau <strong>15 phút</strong>.</p>
+                            
+                            <div class="warning">
+                                <strong>Lưu ý:</strong> Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này. Tuyệt đối không chia sẻ mã này cho bất kỳ ai.
+                            </div>
+                        </div>
+                        <div class="footer">
+                            &copy; ${new Date().getFullYear()} TruyenVietHay. All rights reserved.<br>
+                            Đây là email tự động, vui lòng không trả lời.
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `
+        };
+
+        await transporter.sendMail(mailOptions);
+        res.json({ message: 'Mã xác nhận đã được gửi tới email của bạn.' });
+
+    } catch (error) {
+        console.error("Lỗi gửi mail:", error);
+        res.status(500).json({ message: 'Lỗi server.' });
+    }
+};
+
+// --- 2. ĐẶT LẠI MẬT KHẨU ---
+exports.resetPassword = async (req, res) => {
+    let { email, otp, newPassword } = req.body;
+    otp = otp.trim();
+    email = email.trim();
+
+    try {
+        const [resets] = await db.execute(
+            'SELECT * FROM password_resets WHERE email = ? AND otp = ? AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
+            [email, otp]
+        );
+
+        if (resets.length === 0) {
+            return res.status(400).json({ message: 'Mã xác nhận sai hoặc đã hết hạn!' });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await db.execute('UPDATE users SET password = ? WHERE email = ?', [hashedPassword, email]);
+        await db.execute('DELETE FROM password_resets WHERE email = ?', [email]);
+
+        res.json({ message: 'Đổi mật khẩu thành công!' });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Lỗi server.' });
     }
 };
