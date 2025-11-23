@@ -17,17 +17,21 @@ exports.createReport = async (req, res) => {
     }
 };
 
-// 2. [ADMIN] Lấy tất cả báo cáo
+// 2. [ADMIN] Lấy tất cả báo cáo (Sửa JOIN -> LEFT JOIN)
 exports.getAllReports = async (req, res) => {
     try {
+        // Dùng LEFT JOIN để vẫn hiện báo cáo ngay cả khi user bị xóa
         const [rows] = await db.execute(`
-            SELECT r.*, u.username, u.full_name 
+            SELECT r.*, 
+                   COALESCE(u.username, 'User đã xóa') as username, 
+                   COALESCE(u.full_name, 'N/A') as full_name
             FROM reports r 
-            JOIN users u ON r.user_id = u.id 
+            LEFT JOIN users u ON r.user_id = u.id 
             ORDER BY r.created_at DESC
         `);
         res.json(rows);
     } catch (error) {
+        console.error("Lỗi lấy báo cáo:", error);
         res.status(500).json({ message: 'Lỗi server' });
     }
 };

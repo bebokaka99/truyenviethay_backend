@@ -1,20 +1,17 @@
 const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const axios = require('axios'); // Dùng Axios để gọi API Brevo (Cần cài: npm install axios)
+const axios = require('axios'); 
 const { createNotificationInternal } = require('./notificationController');
+
 // Import helper updateQuestProgress từ userController
 const { updateQuestProgress } = require('./userController'); 
 
-// ============================================================
-// HÀM GỬI MAIL QUA BREVO API (HTTP v3) - FIX LỖI TIMEOUT
-// ============================================================
+// Hàm gửi email qua API Brevo (Sendinblue cũ)
 const sendEmailViaBrevo = async (toEmail, subject, htmlContent) => {
-    // Lấy API Key từ biến môi trường (Mã bắt đầu bằng xkeysib-...)
+    // Lấy API Key từ biến môi trường 
     const apiKey = process.env.EMAIL_PASS; 
     
-    // Email người gửi (Phải là email thực đã verify với Brevo, VD: tlm20k2@gmail.com)
-    // Lấy từ biến môi trường EMAIL_USER mà bạn đã cấu hình trên Render
     const senderEmail = process.env.EMAIL_USER; 
     const senderName = "TruyenVietHay Support";
 
@@ -33,18 +30,15 @@ const sendEmailViaBrevo = async (toEmail, subject, htmlContent) => {
                 'Accept': 'application/json'
             }
         });
-        console.log(`✅ API Brevo: Đã gửi mail tới ${toEmail}`);
+        console.log(`API Brevo: Đã gửi mail tới ${toEmail}`);
         return true;
     } catch (error) {
-        console.error("❌ Lỗi API Brevo:", error.response ? error.response.data : error.message);
+        console.error("Lỗi API Brevo:", error.response ? error.response.data : error.message);
         // Không ném lỗi ra ngoài để tránh crash luồng chính, chỉ log lỗi
         return false;
     }
 };
-
-// ============================================================
-// LOGIC ĐIỂM DANH & STREAK
-// ============================================================
+// Logic điểm danh và streak
 const handleLoginStreaks = async (userId) => {
     try {
         // 1. Lấy thông tin đăng nhập lần cuối
@@ -86,9 +80,7 @@ const handleLoginStreaks = async (userId) => {
     }
 };
 
-// ============================================================
-// ĐĂNG KÝ
-// ============================================================
+// Đăng ký tài khoản
 exports.register = async (req, res) => {
     const { username, email, password, full_name } = req.body;
 
@@ -114,10 +106,7 @@ exports.register = async (req, res) => {
         res.status(500).json({ message: 'Lỗi server khi đăng ký.' });
     }
 };
-
-// ============================================================
-// ĐĂNG NHẬP (HỖ TRỢ EMAIL HOẶC USERNAME)
-// ============================================================
+// Đăng nhập tài khoản
 exports.login = async (req, res) => {
     // Frontend gửi 'identifier', check cả 'email' để tương thích ngược
     const { identifier, email, password } = req.body;
@@ -187,9 +176,7 @@ exports.login = async (req, res) => {
     }
 };
 
-// ============================================================
-// 1. QUÊN MẬT KHẨU (GỬI OTP QUA API BREVO)
-// ============================================================
+// Quên mật khẩu (Gửi OTP qua API Brevo)
 exports.forgotPassword = async (req, res) => {
     const { email } = req.body;
     try {
@@ -260,9 +247,7 @@ exports.forgotPassword = async (req, res) => {
     }
 };
 
-// ============================================================
-// 2. ĐẶT LẠI MẬT KHẨU (RESET)
-// ============================================================
+// 2. Đặt lại mật khẩu (Reset)
 exports.resetPassword = async (req, res) => {
     let { email, otp, newPassword } = req.body;
     

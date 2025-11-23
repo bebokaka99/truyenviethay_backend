@@ -1,18 +1,14 @@
 const bcrypt = require('bcryptjs');
 const db = require('../config/db');
-const axios = require('axios');
+const axios = require('axios'); // Thư viện để gọi API Otruyen
 const { createNotificationInternal } = require('./notificationController');
 
 // ============================================================
-// HELPER: CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (LOGIC ĐÃ FIX LỖI SPAM LOGIN)
+// HELPER: CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (Dùng chung)
 // ============================================================
 const updateQuestProgress = async (userId, actionType, val = 1) => {
-    // val: 
-    // - Với 'read'/'comment': là số lượng cộng thêm (thường là 1).
-    // - Với 'streak': là con số streak thực tế (ví dụ: 5).
     try {
         const [quests] = await db.execute("SELECT * FROM quests WHERE action_type = ?", [actionType]);
-        
         if (quests.length === 0) return;
 
         for (const quest of quests) {
@@ -30,7 +26,6 @@ const updateQuestProgress = async (userId, actionType, val = 1) => {
             let isFirstComplete = false;
 
             if (existing.length === 0) {
-                // --- CHƯA LÀM BAO GIỜ -> TẠO MỚI ---
                 newCount = val;
                 if (newCount >= quest.target_count) isFirstComplete = true;
                 
@@ -39,64 +34,41 @@ const updateQuestProgress = async (userId, actionType, val = 1) => {
                     [userId, quest.id, newCount]
                 );
             } else {
-                // --- ĐÃ CÓ DỮ LIỆU -> CẬP NHẬT ---
                 const record = existing[0];
-                
-                // 1. Kiểm tra Reset theo chu kỳ (Ngày/Tuần)
                 let isReset = false;
+
                 if (quest.type === 'daily' && record.days_diff !== 0) isReset = true;
                 else if (quest.type === 'weekly' && record.weeks_diff !== 0) isReset = true;
                 
                 if (isReset) {
-                    // --- TRƯỜNG HỢP RESET CHU KỲ ---
                     if (quest.quest_key === 'weekly_streak') {
-                         // Streak không bao giờ reset về 0 ở đây, nó lấy giá trị thực tế từ AuthController
                          newCount = val; 
                     } else {
-                         // Các nhiệm vụ khác (Daily Login, Weekly Read...) reset về khởi điểm
-                         // Nếu là login thì khởi điểm là 1 (ngày đầu tiên), nếu là read thì là val
-                         newCount = (quest.action_type === 'login') ? 1 : val;
+                         newCount = (quest.action_type === 'login') ? 1 : val; 
                     }
-                    newClaimed = 0; // Reset trạng thái nhận thưởng
+                    newClaimed = 0; 
                     needUpdate = true;
-                    
-                    // Kiểm tra hoàn thành ngay sau khi reset (VD: Nhiệm vụ đăng nhập 1 lần)
                     if (newCount >= quest.target_count) isFirstComplete = true;
-
                 } else {
-                    // --- TRƯỜNG HỢP CÙNG CHU KỲ (Cùng ngày/Cùng tuần) ---
                     newClaimed = record.is_claimed;
                     
                     if (quest.action_type === 'login') {
-                        // [FIX QUAN TRỌNG]: Xử lý Login
+                        newCount = record.current_count; 
                         if (quest.quest_key === 'weekly_streak') {
-                            // Streak: Chỉ update nếu giá trị streak thay đổi (tăng lên)
-                            // AuthController đã tính toán logic reset streak rồi
-                            if (record.current_count !== val) {
+                            if (newCount !== val) {
                                 newCount = val;
                                 needUpdate = true;
-                            } else {
-                                newCount = record.current_count;
                             }
                         } else {
-                            // Các nhiệm vụ Login đếm số lần (VD: Daily Login, Login 5 ngày/tuần)
-                            // CHỈ TĂNG NẾU LÀ NGÀY MỚI (days_diff != 0)
                             if (record.days_diff !== 0) {
                                 newCount = record.current_count + 1;
                                 needUpdate = true;
-                            } else {
-                                // Nếu cùng ngày -> KHÔNG LÀM GÌ CẢ (Idempotent)
-                                newCount = record.current_count;
                             }
                         }
                     } else {
-                        // [FIX]: Xử lý Read/Comment (Cộng dồn)
-                        // Chỉ cộng nếu chưa max target HOẶC là thành tựu (tích lũy mãi mãi)
                         if (record.current_count < quest.target_count || quest.type === 'achievement') {
                             newCount = record.current_count + val;
                             needUpdate = true;
-                            
-                            // Check hoàn thành lần đầu
                             if (newCount >= quest.target_count && record.current_count < quest.target_count && newClaimed === 0) {
                                 isFirstComplete = true;
                             }
@@ -116,11 +88,8 @@ const updateQuestProgress = async (userId, actionType, val = 1) => {
 
             if (isFirstComplete) {
                  await createNotificationInternal(
-                    userId, 
-                    'quest', 
-                    'Nhiệm vụ hoàn thành!', 
-                    `Bạn đã hoàn thành: ${quest.name}. Hãy vào trang hồ sơ nhận thưởng!`, 
-                    '/profile?tab=tasks'
+                    userId, 'quest', 'Nhiệm vụ hoàn thành!', 
+                    `Bạn đã hoàn thành: ${quest.name}. Hãy vào trang hồ sơ nhận thưởng!`, '/profile?tab=tasks'
                 );
             }
         }
@@ -196,7 +165,7 @@ exports.getLibrary = async (req, res) => {
                     comic_image: `https://img.otruyenapi.com/uploads/comics/${apiData.thumb_url}`
                 };
             } catch (err) {
-                console.error(`Lỗi fetch Otruyen ${comic.comic_slug}:`, err.message);
+                // console.error(`Lỗi fetch Otruyen ${comic.comic_slug}:`, err.message);
                 return {
                     ...comic,
                     updated_at: comic.created_at
@@ -242,7 +211,6 @@ exports.saveHistory = async (req, res) => {
             [userId, comic_slug, comic_name, comic_image, chapter_name]
         );
 
-        // Cập nhật Nhiệm vụ Đọc
         updateQuestProgress(userId, 'read', 1).catch(err => console.error("Quest Update Error:", err));
         
         res.status(200).json({ message: 'Đã lưu lịch sử' });
@@ -272,14 +240,17 @@ exports.checkReadingHistory = async (req, res) => {
 
 
 // ============================================================
-// PROFILE (THÔNG TIN CÁ NHÂN)
+// PROFILE (THÔNG TIN CÁ NHÂN) - ĐÃ CẬP NHẬT CHO CLOUDINARY
 // ============================================================
 
 exports.updateProfile = async (req, res) => {
     const userId = req.user.id;
     const { full_name, rank_style } = req.body;
     try {
-        let avatarPath = req.file ? req.file.path.replace(/\\/g, "/") : null;
+        // Khi dùng Cloudinary Storage, req.file.path CHÍNH LÀ URL của ảnh trên Cloud
+        // Ví dụ: https://res.cloudinary.com/demo/image/upload/v157.../avatar.jpg
+        let avatarPath = req.file ? req.file.path : null;
+        
         let sql = 'UPDATE users SET full_name = ?, rank_style = ?';
         let params = [full_name, rank_style];
         

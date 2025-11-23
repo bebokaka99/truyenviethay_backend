@@ -15,7 +15,7 @@ const pool = mysql.createPool({
     queueLimit: 0,
     timezone: '+07:00', 
     
-    // --- BẮT BUỘC PHẢI THÊM ĐOẠN NÀY CHO TI-DB/PLANETSCALE ---
+    // Cấu hình SSL sử dụng biến môi trường
     ssl: {
         // Node.js sẽ coi chuỗi này là nội dung của Certificate
         ca: process.env.TIDB_CA_CERT 
