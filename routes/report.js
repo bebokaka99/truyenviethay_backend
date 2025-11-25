@@ -1,17 +1,26 @@
 const express = require('express');
 const router = express.Router();
+// --- DÒNG NÀY BỊ THIẾU GÂY RA LỖI ---
+const reportController = require('../controllers/reportController');
+// ------------------------------------
 const authMiddleware = require('../middleware/authMiddleware');
 const adminMiddleware = require('../middleware/adminMiddleware');
-const { createReport, getAllReports, deleteReport } = require('../controllers/reportController');
 
-// User gửi báo cáo
-router.post('/', authMiddleware, createReport);
+// ===========================================
+// --- ROUTES BÁO LỖI TRUYỆN (CŨ) ---
+// ===========================================
+// (Giữ nguyên các route cũ của bạn ở đây, ví dụ:)
+// router.post('/', authMiddleware, reportController.submitReport);
+// router.get('/admin/all', authMiddleware, adminMiddleware, reportController.getAllReportsForAdmin);
+// router.delete('/admin/:id', authMiddleware, adminMiddleware, reportController.deleteReport);
 
-// Admin quản lý
-router.get('/admin/all', authMiddleware, adminMiddleware, getAllReports);
-router.delete('/admin/:id', authMiddleware, adminMiddleware, deleteReport);
+
+// ===========================================
+// --- ROUTES MỚI CHO BÁO CÁO BÌNH LUẬN ---
+// ===========================================
 
 // [USER] Gửi báo cáo cho một bình luận
+// Dòng này gây lỗi trước đó do thiếu reportController
 router.post('/comments', authMiddleware, reportController.submitCommentReport);
 
 // [ADMIN] Lấy danh sách tất cả báo cáo bình luận
