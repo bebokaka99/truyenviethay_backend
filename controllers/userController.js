@@ -287,78 +287,78 @@ exports.changePassword = async (req, res) => {
 };
 
 
-// ============================================================
-// ADMIN ACTIONS
-// ============================================================
-
 exports.getAllUsers = async (req, res) => {
-    try { const [rows] = await db.execute('SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at FROM users ORDER BY created_at DESC'); res.json(rows); } catch (e) { res.status(500).json({message: 'Lỗi'}); }
-};
-
-exports.deleteUser = async (req, res) => { 
-    try { await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]); res.json({message:'Đã xóa'}); } catch(e) { res.status(500).json({message:'Lỗi'}); } 
-};
-
-exports.warnUser = async (req, res) => { 
-    try { await db.execute('UPDATE users SET warnings = warnings + 1 WHERE id = ?', [req.params.id]); res.json({message:'Đã cảnh báo'}); } catch(e) { res.status(500).json({message:'Lỗi'}); } 
-};
-
-exports.banUser = async (req, res) => { 
-    const {id} = req.params; const {days} = req.body; 
-    let d = null, s = 'banned'; 
-    if(days != -1 && days != '-1') { 
-        d = new Date(); 
-        d.setDate(d.getDate() + parseInt(days)); 
-        d = d.toISOString().slice(0,19).replace('T',' '); 
-    }
-    try { await db.execute('UPDATE users SET status = ?, ban_expires_at = ? WHERE id = ?', [s, d, id]); res.json({message:'Đã chặn'}); } catch(e) { res.status(500).json({message:'Lỗi'}); } 
-};
-
-exports.unbanUser = async (req, res) => { 
-    try { await db.execute("UPDATE users SET status = 'active', ban_expires_at = NULL WHERE id = ?", [req.params.id]); res.json({message:'Đã mở khóa'}); } catch(e) { res.status(500).json({message:'Lỗi'}); } 
-};
-
-exports.getManagedComics = async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT * FROM comic_settings ORDER BY updated_at DESC');
-        res.json(rows);
-    } catch (error) {
-        res.status(500).json({ message: 'Lỗi server' });
-    }
-};
+        // 1. Lấy tham số page và limit từ query string
+        const page = parseInt(req.query.page) || 1; // Trang mặc định là 1
+        const limit = parseInt(req.query.limit) || 10; // Mặc định 10 user mỗi trang
+        const offset = (page - 1) * limit; // Tính vị trí bắt đầu lấy dữ liệu
 
-exports.updateComicSetting = async (req, res) => {
-    const { slug, name, is_hidden, is_recommended } = req.body;
-    try {
-        await db.execute(`
-            INSERT INTO comic_settings (slug, name, is_hidden, is_recommended) 
-            VALUES (?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE 
-                name = VALUES(name),
-                is_hidden = VALUES(is_hidden),
-                is_recommended = VALUES(is_recommended)
-        `, [slug, name, is_hidden, is_recommended]);
-        
-        res.json({ message: 'Cập nhật trạng thái truyện thành công!' });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Lỗi server' });
-    }
-};
+        // 2. Đếm tổng số lượng user để tính tổng số trang
+        const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
+        const totalUsers = countResult[0].total;
+        const totalPages = Math.ceil(totalUsers / limit);
 
-exports.getPublicComicSettings = async (req, res) => {
-    try {
-        const [rows] = await db.execute('SELECT slug, is_hidden, is_recommended FROM comic_settings');
-        const settingsMap = {};
-        rows.forEach(row => {
-            settingsMap[row.slug] = {
-                is_hot: row.is_recommended === 1,
-                is_hidden: row.is_hidden === 1
-            };
+        // 3. Truy vấn dữ liệu có sử dụng LIMIT và OFFSET
+        // LƯU Ý: Sử dụng tham số hóa (?) cho LIMIT và OFFSET để bảo mật
+        const [rows] = await db.execute(
+            `SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
+             FROM users 
+             ORDER BY created_at DESC 
+             LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
+
+        // 4. Trả về cấu trúc dữ liệu mới gồm data và pagination
+        res.json({
+            data: rows,         // Danh sách user của trang hiện tại
+            pagination: {
+                currentPage: page,
+                limit: limit,
+                totalUsers: totalUsers,
+                totalPages: totalPages
+            }
         });
-        res.json(settingsMap);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({});
+
+    } catch (e) {
+        console.error("Lỗi getAllUsers (Admin):", e);
+        res.status(500).json({ message: 'Lỗi server' });
+    }
+};exports.getAllUsers = async (req, res) => {
+    try {
+        // 1. Lấy tham số page và limit từ query string
+        const page = parseInt(req.query.page) || 1; // Trang mặc định là 1
+        const limit = parseInt(req.query.limit) || 10; // Mặc định 10 user mỗi trang
+        const offset = (page - 1) * limit; // Tính vị trí bắt đầu lấy dữ liệu
+
+        // 2. Đếm tổng số lượng user để tính tổng số trang
+        const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
+        const totalUsers = countResult[0].total;
+        const totalPages = Math.ceil(totalUsers / limit);
+
+        // 3. Truy vấn dữ liệu có sử dụng LIMIT và OFFSET
+        // LƯU Ý: Sử dụng tham số hóa (?) cho LIMIT và OFFSET để bảo mật
+        const [rows] = await db.execute(
+            `SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
+             FROM users 
+             ORDER BY created_at DESC 
+             LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
+
+        // 4. Trả về cấu trúc dữ liệu mới gồm data và pagination
+        res.json({
+            data: rows,         // Danh sách user của trang hiện tại
+            pagination: {
+                currentPage: page,
+                limit: limit,
+                totalUsers: totalUsers,
+                totalPages: totalPages
+            }
+        });
+
+    } catch (e) {
+        console.error("Lỗi getAllUsers (Admin):", e);
+        res.status(500).json({ message: 'Lỗi server' });
     }
 };
