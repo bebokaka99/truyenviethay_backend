@@ -4,6 +4,12 @@ const userController = require('../controllers/userController'); // Đảm bảo
 const authMiddleware = require('../middleware/authMiddleware');
 const adminMiddleware = require('../middleware/adminMiddleware');
 
+const multer = require('multer');
+
+const { storage } = require('../config/cloudinary');
+
+const upload = multer({ storage: storage });
+
 // ==================== PUBLIC ROUTES (Không cần đăng nhập) ====================
 // Đăng ký người dùng mới
 router.post('/register', userController.registerUser);
@@ -21,7 +27,7 @@ router.get('/public/settings', userController.getPublicComicSettings);
 // Lấy thông tin profile của chính mình
 router.get('/profile', authMiddleware, userController.getProfile);
 // Cập nhật profile (avatar, full_name...)
-router.put('/profile', authMiddleware, userController.updateProfile);
+router.put('/profile', authMiddleware, upload.single('avatar'), userController.updateProfile);
 // Đổi mật khẩu
 router.put('/change-password', authMiddleware, userController.changePassword);
 
