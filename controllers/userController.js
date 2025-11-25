@@ -299,7 +299,6 @@ exports.getAllUsers = async (req, res) => {
         const totalPages = Math.ceil(totalUsers / limit);
 
         // 3. Truy vấn dữ liệu có sử dụng LIMIT và OFFSET
-        // LƯU Ý: Sử dụng tham số hóa (?) cho LIMIT và OFFSET để bảo mật
         const [rows] = await db.execute(
             `SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
              FROM users 
@@ -310,7 +309,7 @@ exports.getAllUsers = async (req, res) => {
 
         // 4. Trả về cấu trúc dữ liệu mới gồm data và pagination
         res.json({
-            data: rows,         // Danh sách user của trang hiện tại
+            data: rows,
             pagination: {
                 currentPage: page,
                 limit: limit,
