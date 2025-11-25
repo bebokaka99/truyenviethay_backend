@@ -1,26 +1,33 @@
 const express = require('express');
 const router = express.Router();
-// --- DÒNG NÀY BỊ THIẾU GÂY RA LỖI ---
-const reportController = require('../controllers/reportController');
-// ------------------------------------
 const authMiddleware = require('../middleware/authMiddleware');
 const adminMiddleware = require('../middleware/adminMiddleware');
 
-// ===========================================
-// --- ROUTES BÁO LỖI TRUYỆN (CŨ) ---
-// ===========================================
-// (Giữ nguyên các route cũ của bạn ở đây, ví dụ:)
-// router.post('/', authMiddleware, reportController.submitReport);
-// router.get('/admin/all', authMiddleware, adminMiddleware, reportController.getAllReportsForAdmin);
-// router.delete('/admin/:id', authMiddleware, adminMiddleware, reportController.deleteReport);
+// --- SỬA LỖI Ở ĐÂY ---
+// Thay vì lấy từng hàm lẻ, ta lấy toàn bộ object controller
+const reportController = require('../controllers/reportController');
+// --------------------
 
 
 // ===========================================
-// --- ROUTES MỚI CHO BÁO CÁO BÌNH LUẬN ---
+// ROUTES BÁO LỖI TRUYỆN (CŨ)
 // ===========================================
+// Cập nhật các route cũ để dùng 'reportController.' phía trước tên hàm
+
+// User gửi báo cáo truyện
+router.post('/', authMiddleware, reportController.createReport);
+
+// Admin quản lý báo cáo truyện
+router.get('/admin/all', authMiddleware, adminMiddleware, reportController.getAllReports);
+router.delete('/admin/:id', authMiddleware, adminMiddleware, reportController.deleteReport);
+
+
+// ===========================================
+// ROUTES MỚI CHO BÁO CÁO BÌNH LUẬN
+// ===========================================
+// Các route này bây giờ sẽ hoạt động vì biến reportController đã được định nghĩa ở trên
 
 // [USER] Gửi báo cáo cho một bình luận
-// Dòng này gây lỗi trước đó do thiếu reportController
 router.post('/comments', authMiddleware, reportController.submitCommentReport);
 
 // [ADMIN] Lấy danh sách tất cả báo cáo bình luận
