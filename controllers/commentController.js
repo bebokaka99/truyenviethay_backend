@@ -52,10 +52,18 @@ exports.addComment = async (req, res) => {
         if (parent_id) {
             const [parents] = await db.execute('SELECT user_id FROM comments WHERE id = ?', [parent_id]);
             if (parents.length > 0 && parents[0].user_id !== userId) {
-                 createNotificationInternal(parents[0].user_id, 'reply', `${currentUser.full_name} đã trả lời bạn`, `Trong truyện: ${comic_slug}`, `/truyen-tranh/${comic_slug}`).catch(console.error);
+                // --- SỬA DÒNG NÀY ---
+                // Thêm #comment-${result.insertId} vào cuối link để trỏ đến bình luận MỚI vừa tạo
+                 createNotificationInternal(
+                    parents[0].user_id, 
+                    'reply', 
+                    `${currentUser.full_name} đã trả lời bạn`, 
+                    `Trong truyện: ${comic_slug}`, 
+                    `/truyen-tranh/${comic_slug}#comment-${result.insertId}` // <-- THÊM HASH
+                ).catch(console.error);
+                // --------------------
             }
         }
-
         res.status(201).json({
             id: result.insertId,
             user_id: userId,
@@ -98,10 +106,17 @@ exports.toggleLike = async (req, res) => {
                 const [comments] = await db.execute('SELECT user_id, comic_slug, content FROM comments WHERE id = ?', [comment_id]);
                 if (comments.length > 0 && comments[0].user_id !== userId) {
                     const [likers] = await db.execute('SELECT full_name FROM users WHERE id = ?', [userId]);
+                    
+                    // --- SỬA DÒNG NÀY ---
+                    // Thêm #comment-${comment_id} vào cuối link để trỏ đến bình luận ĐƯỢC LIKE
                     await createNotificationInternal(
-                        comments[0].user_id, 'like', `${likers[0].full_name} thích bình luận`, 
-                        `"${comments[0].content.substring(0, 20)}..."`, `/truyen-tranh/${comments[0].comic_slug}`
+                        comments[0].user_id, 
+                        'like', 
+                        `${likers[0].full_name} thích bình luận`, 
+                        `"${comments[0].content.substring(0, 20)}..."`, 
+                        `/truyen-tranh/${comments[0].comic_slug}#comment-${comment_id}` // <-- THÊM HASH
                     );
+                    // --------------------
                 }
             } catch (e) { console.error("Lỗi notif like:", e); }
         }
