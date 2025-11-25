@@ -73,8 +73,8 @@ exports.loginUser = async (req, res) => {
         if (user.status === 'banned') {
             // Kiểm tra xem hạn ban còn không
             if (user.ban_expires_at && new Date(user.ban_expires_at) > new Date()) {
-                 return res.status(403).json({ 
-                    message: `Tài khoản bị khóa đến ${new Date(user.ban_expires_at).toLocaleString('vi-VN')}. Lý do: Vi phạm quy định.` 
+                return res.status(403).json({
+                    message: `Tài khoản bị khóa đến ${new Date(user.ban_expires_at).toLocaleString('vi-VN')}. Lý do: Vi phạm quy định.`
                 });
             } else {
                 // Nếu hết hạn ban, tự động mở khóa (tùy chọn, ở đây mình cập nhật lại trạng thái)
@@ -85,7 +85,7 @@ exports.loginUser = async (req, res) => {
 
         // Tạo JWT Token
         // CHÚ Ý: Thay 'YOUR_JWT_SECRET_KEY' bằng secret key thật của bạn trong file .env nếu có
-        const tokenSecret = process.env.JWT_SECRET || 'YOUR_FALLBACK_SECRET_KEY'; 
+        const tokenSecret = process.env.JWT_SECRET || 'YOUR_FALLBACK_SECRET_KEY';
         const token = jwt.sign(
             { id: user.id, role: user.role, username: user.username },
             tokenSecret,
@@ -128,10 +128,10 @@ const updateQuestProgress = async (userId, actionType, val = 1, questKeyOptional
     try {
         let query = "SELECT * FROM quests WHERE action_type = ?";
         let params = [actionType];
-        
+
         if (questKeyOptional) {
-             query += " AND quest_key = ?";
-             params.push(questKeyOptional);
+            query += " AND quest_key = ?";
+            params.push(questKeyOptional);
         }
 
         const [quests] = await db.execute(query, params);
@@ -169,29 +169,29 @@ const updateQuestProgress = async (userId, actionType, val = 1, questKeyOptional
                 if (isReset) {
                     if (quest.quest_key === 'weekly_streak') {
                         // Nếu là streak, reset về 1 nếu bị ngắt quãng, ngược lại giữ nguyên để cộng tiếp ở dưới
-                         if (record.days_diff > 1) newCount = 1; else newCount = record.current_count;
+                        if (record.days_diff > 1) newCount = 1; else newCount = record.current_count;
                     } else {
                         newCount = (quest.action_type === 'login') ? 1 : val;
                     }
                     newClaimed = 0;
                     needUpdate = true;
-                    
+
                 } else {
                     newClaimed = record.is_claimed;
                     newCount = record.current_count;
                 }
 
-                 // Logic cộng dồn (áp dụng cho cả khi vừa reset hoặc không reset)
-                 if (quest.quest_key === 'weekly_streak') {
-                     // Logic cho streak: chỉ cộng nếu là ngày mới liền kề
-                     if (record.days_diff === 1) {
-                          newCount = record.current_count + 1;
-                          needUpdate = true;
-                     }
-                 } else if (quest.action_type === 'login') {
-                      // Login thường: không cộng dồn trong ngày
-                 }
-                 else {
+                // Logic cộng dồn (áp dụng cho cả khi vừa reset hoặc không reset)
+                if (quest.quest_key === 'weekly_streak') {
+                    // Logic cho streak: chỉ cộng nếu là ngày mới liền kề
+                    if (record.days_diff === 1) {
+                        newCount = record.current_count + 1;
+                        needUpdate = true;
+                    }
+                } else if (quest.action_type === 'login') {
+                    // Login thường: không cộng dồn trong ngày
+                }
+                else {
                     // Các nhiệm vụ khác (đọc, comment): cộng dồn bình thường
                     if (record.current_count < quest.target_count || quest.type === 'achievement') {
                         newCount = record.current_count + val;
@@ -201,8 +201,8 @@ const updateQuestProgress = async (userId, actionType, val = 1, questKeyOptional
 
                 // Kiểm tra hoàn thành sau khi tính toán newCount
                 if (newCount >= quest.target_count && record.current_count < quest.target_count && newClaimed === 0) {
-                     isFirstComplete = true;
-                     needUpdate = true; // Đảm bảo cập nhật nếu hoàn thành
+                    isFirstComplete = true;
+                    needUpdate = true; // Đảm bảo cập nhật nếu hoàn thành
                 }
 
 
@@ -433,8 +433,35 @@ exports.deleteUser = async (req, res) => {
     try { await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]); res.json({ message: 'Đã xóa user' }); } catch (e) { res.status(500).json({ message: 'Lỗi xóa user' }); }
 };
 
+// [ADMIN] Cảnh báo user kèm thông báo
 exports.warnUser = async (req, res) => {
-    try { await db.execute('UPDATE users SET warnings = warnings + 1 WHERE id = ?', [req.params.id]); res.json({ message: 'Đã gửi cảnh báo' }); } catch (e) { res.status(500).json({ message: 'Lỗi gửi cảnh báo' }); }
+    const userId = req.params.id;
+    // Nhận lý do từ body request
+    const { reason } = req.body;
+
+    if (!reason) {
+        return res.status(400).json({ message: 'Vui lòng cung cấp lý do cảnh báo.' });
+    }
+
+    try {
+        // 1. Tăng số lần cảnh báo trong DB
+        await db.execute('UPDATE users SET warnings = warnings + 1 WHERE id = ?', [userId]);
+
+        // 2. Gửi thông báo hệ thống cho người dùng
+        // (Đảm bảo bạn đã import createNotificationInternal ở đầu file này)
+        await createNotificationInternal(
+            userId,
+            'system',
+            'Bạn đã nhận 1 cảnh báo vi phạm',
+            `Lý do: ${reason}. Vui lòng tuân thủ quy định cộng đồng. Nhiều cảnh báo có thể dẫn đến khóa tài khoản.`,
+            null // Không có link cụ thể
+        );
+
+        res.json({ message: 'Đã gửi cảnh báo và thông báo cho người dùng.' });
+    } catch (e) {
+        console.error("Lỗi warnUser:", e);
+        res.status(500).json({ message: 'Lỗi khi gửi cảnh báo.' });
+    }
 };
 
 exports.banUser = async (req, res) => {
@@ -456,7 +483,7 @@ exports.unbanUser = async (req, res) => {
 exports.changeUserRole = async (req, res) => {
     const userIdToChange = req.params.id;
     const { newRole } = req.body;
-    const adminId = req.user.id; 
+    const adminId = req.user.id;
 
     if (!['user', 'admin'].includes(newRole)) {
         return res.status(400).json({ message: 'Role không hợp lệ.' });
@@ -537,7 +564,7 @@ exports.getAllUsers = async (req, res) => {
 
         // Dùng template literal cho LIMIT/OFFSET để tránh lỗi của mysql2 driver
         const query = `
-            SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
+            SELECT id, username, email, full_name, avatar, role, status, warnings, ban_expires_at, created_at 
             FROM users 
             ORDER BY created_at DESC 
             LIMIT ${limit} OFFSET ${offset}

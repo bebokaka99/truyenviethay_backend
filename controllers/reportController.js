@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { createNotificationInternal } = require('./notificationController');
 
 // 1. Gửi báo cáo (User gửi)
 exports.createReport = async (req, res) => {
@@ -105,8 +106,7 @@ exports.getAllCommentReportsForAdmin = async (req, res) => {
 // 3. [ADMIN] Xử lý báo cáo (Xóa comment HOẶC Bỏ qua báo cáo)
 exports.resolveCommentReport = async (req, res) => {
     const reportId = req.params.id;
-    // action có thể là 'delete_comment' (xóa comment bị báo cáo) hoặc 'dismiss' (chỉ xóa báo cáo)
-    const { action } = req.body; 
+    const { action } = req.body; // 'delete_comment' hoặc 'dismiss'
 
     if (!['delete_comment', 'dismiss'].includes(action)) {
         return res.status(400).json({ message: 'Hành động không hợp lệ.' });
@@ -115,21 +115,43 @@ exports.resolveCommentReport = async (req, res) => {
     try {
         // Nếu hành động là xóa comment
         if (action === 'delete_comment') {
-             // Lấy comment_id từ báo cáo trước
-             const [reportRows] = await db.execute('SELECT comment_id FROM comment_reports WHERE id = ?', [reportId]);
-             if (reportRows.length === 0) {
-                 return res.status(404).json({ message: 'Báo cáo không tồn tại.' });
+             // a. Lấy thông tin comment và người đăng TRƯỚC KHI xóa
+             const [commentRows] = await db.execute(
+                `SELECT c.id, c.user_id, c.content, cr.reason 
+                 FROM comment_reports cr
+                 JOIN comments c ON cr.comment_id = c.id
+                 WHERE cr.id = ?`, 
+                [reportId]
+            );
+
+             if (commentRows.length === 0) {
+                 // Trường hợp hiếm: comment đã bị xóa trước đó
+                 await db.execute('DELETE FROM comment_reports WHERE id = ?', [reportId]);
+                 return res.json({ message: 'Bình luận không còn tồn tại. Đã đóng báo cáo.' });
              }
-             const commentId = reportRows[0].comment_id;
+
+             const commentData = commentRows[0];
              
-             // Thực hiện xóa comment khỏi bảng comments
-             await db.execute('DELETE FROM comments WHERE id = ?', [commentId]);
+             // b. Thực hiện xóa comment khỏi bảng comments
+             await db.execute('DELETE FROM comments WHERE id = ?', [commentData.id]);
+
+             // c. Gửi thông báo cho người bị xóa comment (nếu user đó còn tồn tại)
+             if (commentData.user_id) {
+                const shortContent = commentData.content.length > 50 ? commentData.content.substring(0, 50) + '...' : commentData.content;
+                await createNotificationInternal(
+                    commentData.user_id,
+                    'system',
+                    'Bình luận của bạn đã bị xóa',
+                    `Bình luận: "${shortContent}" đã bị xóa do vi phạm. Lý do báo cáo: ${commentData.reason}.`,
+                    null
+                );
+             }
         }
 
-        // Dù hành động là gì thì cuối cùng cũng xóa báo cáo đó khỏi bảng comment_reports vì đã xử lý xong
+        // Dù hành động là gì thì cuối cùng cũng xóa báo cáo đó đi
         await db.execute('DELETE FROM comment_reports WHERE id = ?', [reportId]);
 
-        res.json({ message: action === 'delete_comment' ? 'Đã xóa bình luận và đóng báo cáo.' : 'Đã bỏ qua báo cáo.' });
+        res.json({ message: action === 'delete_comment' ? 'Đã xóa bình luận, gửi thông báo và đóng báo cáo.' : 'Đã bỏ qua báo cáo.' });
     } catch (error) {
         console.error("Lỗi resolveCommentReport:", error);
         res.status(500).json({ message: 'Lỗi server khi xử lý báo cáo.' });
