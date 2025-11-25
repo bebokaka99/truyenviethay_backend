@@ -1,14 +1,140 @@
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken'); // <-- CẦN THÊM DÒNG NÀY ĐỂ ĐĂNG NHẬP HOẠT ĐỘNG
 const db = require('../config/db');
 const axios = require('axios'); // Thư viện để gọi API Otruyen
 const { createNotificationInternal } = require('./notificationController');
 
 // ============================================================
+// AUTHENTICATION (ĐĂNG KÝ & ĐĂNG NHẬP) - CÁC HÀM BỊ THIẾU
+// ============================================================
+
+// Đăng ký người dùng mới
+exports.registerUser = async (req, res) => {
+    const { username, email, password, full_name } = req.body;
+
+    // Validate đầu vào cơ bản
+    if (!username || !email || !password || !full_name) {
+        return res.status(400).json({ message: 'Vui lòng điền đầy đủ thông tin.' });
+    }
+
+    try {
+        // Kiểm tra xem username hoặc email đã tồn tại chưa
+        const [existingUsers] = await db.execute(
+            'SELECT id FROM users WHERE username = ? OR email = ?',
+            [username, email]
+        );
+
+        if (existingUsers.length > 0) {
+            return res.status(409).json({ message: 'Tên đăng nhập hoặc Email đã tồn tại.' });
+        }
+
+        // Mã hóa mật khẩu
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Thêm user mới vào DB
+        // Role mặc định là 'user', status mặc định là 'active' (đã set trong DB schema)
+        await db.execute(
+            'INSERT INTO users (username, email, password, full_name, created_at) VALUES (?, ?, ?, ?, NOW())',
+            [username, email, hashedPassword, full_name]
+        );
+
+        res.status(201).json({ message: 'Đăng ký thành công! Vui lòng đăng nhập.' });
+
+    } catch (error) {
+        console.error("Lỗi registerUser:", error);
+        res.status(500).json({ message: 'Lỗi server khi đăng ký.' });
+    }
+};
+
+// Đăng nhập
+exports.loginUser = async (req, res) => {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+        return res.status(400).json({ message: 'Vui lòng nhập tên đăng nhập và mật khẩu.' });
+    }
+
+    try {
+        // Tìm user trong DB
+        const [users] = await db.execute('SELECT * FROM users WHERE username = ?', [username]);
+        const user = users[0];
+
+        if (!user) {
+            return res.status(401).json({ message: 'Sai tên đăng nhập hoặc mật khẩu.' });
+        }
+
+        // Kiểm tra mật khẩu
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ message: 'Sai tên đăng nhập hoặc mật khẩu.' });
+        }
+
+        // Kiểm tra xem user có bị ban không
+        if (user.status === 'banned') {
+            // Kiểm tra xem hạn ban còn không
+            if (user.ban_expires_at && new Date(user.ban_expires_at) > new Date()) {
+                 return res.status(403).json({ 
+                    message: `Tài khoản bị khóa đến ${new Date(user.ban_expires_at).toLocaleString('vi-VN')}. Lý do: Vi phạm quy định.` 
+                });
+            } else {
+                // Nếu hết hạn ban, tự động mở khóa (tùy chọn, ở đây mình cập nhật lại trạng thái)
+                await db.execute("UPDATE users SET status = 'active', ban_expires_at = NULL WHERE id = ?", [user.id]);
+                user.status = 'active'; // Cập nhật object user hiện tại
+            }
+        }
+
+        // Tạo JWT Token
+        // CHÚ Ý: Thay 'YOUR_JWT_SECRET_KEY' bằng secret key thật của bạn trong file .env nếu có
+        const tokenSecret = process.env.JWT_SECRET || 'YOUR_FALLBACK_SECRET_KEY'; 
+        const token = jwt.sign(
+            { id: user.id, role: user.role, username: user.username },
+            tokenSecret,
+            { expiresIn: '7d' } // Token hết hạn sau 7 ngày
+        );
+
+        // Cập nhật nhiệm vụ đăng nhập hàng ngày
+        updateQuestProgress(user.id, 'login', 1).catch(err => console.error("Login Quest Error:", err));
+        // Cập nhật streak
+        updateQuestProgress(user.id, 'login', 1, 'weekly_streak').catch(err => console.error("Streak Quest Error:", err));
+
+
+        // Trả về token và thông tin user (không bao gồm password)
+        res.json({
+            message: 'Đăng nhập thành công!',
+            token,
+            user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                full_name: user.full_name,
+                avatar: user.avatar,
+                role: user.role,
+                exp: user.exp,
+                rank_style: user.rank_style
+            }
+        });
+
+    } catch (error) {
+        console.error("Lỗi loginUser:", error);
+        res.status(500).json({ message: 'Lỗi server khi đăng nhập.' });
+    }
+};
+
+// ============================================================
 // HELPER: CẬP NHẬT TIẾN ĐỘ NHIỆM VỤ (Dùng chung)
 // ============================================================
-const updateQuestProgress = async (userId, actionType, val = 1) => {
+// Lưu ý: Đã thêm tham số questKeyOptional để hỗ trợ 'weekly_streak'
+const updateQuestProgress = async (userId, actionType, val = 1, questKeyOptional = null) => {
     try {
-        const [quests] = await db.execute("SELECT * FROM quests WHERE action_type = ?", [actionType]);
+        let query = "SELECT * FROM quests WHERE action_type = ?";
+        let params = [actionType];
+        
+        if (questKeyOptional) {
+             query += " AND quest_key = ?";
+             params.push(questKeyOptional);
+        }
+
+        const [quests] = await db.execute(query, params);
         if (quests.length === 0) return;
 
         for (const quest of quests) {
@@ -42,41 +168,43 @@ const updateQuestProgress = async (userId, actionType, val = 1) => {
 
                 if (isReset) {
                     if (quest.quest_key === 'weekly_streak') {
-                        newCount = val;
+                        // Nếu là streak, reset về 1 nếu bị ngắt quãng, ngược lại giữ nguyên để cộng tiếp ở dưới
+                         if (record.days_diff > 1) newCount = 1; else newCount = record.current_count;
                     } else {
                         newCount = (quest.action_type === 'login') ? 1 : val;
                     }
                     newClaimed = 0;
                     needUpdate = true;
-                    if (newCount >= quest.target_count) isFirstComplete = true;
+                    
                 } else {
                     newClaimed = record.is_claimed;
+                    newCount = record.current_count;
+                }
 
-                    if (quest.action_type === 'login') {
-                        newCount = record.current_count;
-                        if (quest.quest_key === 'weekly_streak') {
-                            if (newCount !== val) {
-                                newCount = val;
-                                needUpdate = true;
-                            }
-                        } else {
-                            if (record.days_diff !== 0) {
-                                newCount = record.current_count + 1;
-                                needUpdate = true;
-                            }
-                        }
-                    } else {
-                        if (record.current_count < quest.target_count || quest.type === 'achievement') {
-                            newCount = record.current_count + val;
-                            needUpdate = true;
-                            if (newCount >= quest.target_count && record.current_count < quest.target_count && newClaimed === 0) {
-                                isFirstComplete = true;
-                            }
-                        } else {
-                            newCount = record.current_count;
-                        }
+                 // Logic cộng dồn (áp dụng cho cả khi vừa reset hoặc không reset)
+                 if (quest.quest_key === 'weekly_streak') {
+                     // Logic cho streak: chỉ cộng nếu là ngày mới liền kề
+                     if (record.days_diff === 1) {
+                          newCount = record.current_count + 1;
+                          needUpdate = true;
+                     }
+                 } else if (quest.action_type === 'login') {
+                      // Login thường: không cộng dồn trong ngày
+                 }
+                 else {
+                    // Các nhiệm vụ khác (đọc, comment): cộng dồn bình thường
+                    if (record.current_count < quest.target_count || quest.type === 'achievement') {
+                        newCount = record.current_count + val;
+                        needUpdate = true;
                     }
                 }
+
+                // Kiểm tra hoàn thành sau khi tính toán newCount
+                if (newCount >= quest.target_count && record.current_count < quest.target_count && newClaimed === 0) {
+                     isFirstComplete = true;
+                     needUpdate = true; // Đảm bảo cập nhật nếu hoàn thành
+                }
+
 
                 if (needUpdate) {
                     await db.execute(
@@ -243,6 +371,17 @@ exports.checkReadingHistory = async (req, res) => {
 // PROFILE (THÔNG TIN CÁ NHÂN)
 // ============================================================
 
+exports.getProfile = async (req, res) => {
+    try {
+        const [users] = await db.execute('SELECT id, username, email, full_name, avatar, role, exp, rank_style, created_at FROM users WHERE id = ?', [req.user.id]);
+        if (users.length === 0) return res.status(404).json({ message: 'User không tồn tại' });
+        res.json(users[0]);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Lỗi server' });
+    }
+};
+
 exports.updateProfile = async (req, res) => {
     const userId = req.user.id;
     const { full_name, rank_style } = req.body;
@@ -277,11 +416,11 @@ exports.changePassword = async (req, res) => {
     try {
         const [users] = await db.execute('SELECT password FROM users WHERE id = ?', [userId]);
         const user = users[0];
-        if (!await bcrypt.compare(currentPassword, user.password)) return res.status(400).json({ message: 'Sai mật khẩu' });
+        if (!await bcrypt.compare(currentPassword, user.password)) return res.status(400).json({ message: 'Sai mật khẩu hiện tại' });
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         await db.execute('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, userId]);
-        res.json({ message: 'Đổi mật khẩu thành công' });
+        res.json({ message: 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại.' });
     } catch (error) { res.status(500).json({ message: 'Lỗi server' }); }
 };
 
@@ -291,11 +430,11 @@ exports.changePassword = async (req, res) => {
 // ============================================================
 
 exports.deleteUser = async (req, res) => {
-    try { await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]); res.json({ message: 'Đã xóa' }); } catch (e) { res.status(500).json({ message: 'Lỗi' }); }
+    try { await db.execute('DELETE FROM users WHERE id = ?', [req.params.id]); res.json({ message: 'Đã xóa user' }); } catch (e) { res.status(500).json({ message: 'Lỗi xóa user' }); }
 };
 
 exports.warnUser = async (req, res) => {
-    try { await db.execute('UPDATE users SET warnings = warnings + 1 WHERE id = ?', [req.params.id]); res.json({ message: 'Đã cảnh báo' }); } catch (e) { res.status(500).json({ message: 'Lỗi' }); }
+    try { await db.execute('UPDATE users SET warnings = warnings + 1 WHERE id = ?', [req.params.id]); res.json({ message: 'Đã gửi cảnh báo' }); } catch (e) { res.status(500).json({ message: 'Lỗi gửi cảnh báo' }); }
 };
 
 exports.banUser = async (req, res) => {
@@ -306,11 +445,34 @@ exports.banUser = async (req, res) => {
         d.setDate(d.getDate() + parseInt(days));
         d = d.toISOString().slice(0, 19).replace('T', ' ');
     }
-    try { await db.execute('UPDATE users SET status = ?, ban_expires_at = ? WHERE id = ?', [s, d, id]); res.json({ message: 'Đã chặn' }); } catch (e) { res.status(500).json({ message: 'Lỗi' }); }
+    try { await db.execute('UPDATE users SET status = ?, ban_expires_at = ? WHERE id = ?', [s, d, id]); res.json({ message: 'Đã chặn người dùng' }); } catch (e) { res.status(500).json({ message: 'Lỗi chặn user' }); }
 };
 
 exports.unbanUser = async (req, res) => {
-    try { await db.execute("UPDATE users SET status = 'active', ban_expires_at = NULL WHERE id = ?", [req.params.id]); res.json({ message: 'Đã mở khóa' }); } catch (e) { res.status(500).json({ message: 'Lỗi' }); }
+    try { await db.execute("UPDATE users SET status = 'active', ban_expires_at = NULL WHERE id = ?", [req.params.id]); res.json({ message: 'Đã mở khóa người dùng' }); } catch (e) { res.status(500).json({ message: 'Lỗi mở khóa user' }); }
+};
+
+// [ADMIN] Thay đổi Role User (User <-> Admin)
+exports.changeUserRole = async (req, res) => {
+    const userIdToChange = req.params.id;
+    const { newRole } = req.body;
+    const adminId = req.user.id; 
+
+    if (!['user', 'admin'].includes(newRole)) {
+        return res.status(400).json({ message: 'Role không hợp lệ.' });
+    }
+
+    if (parseInt(userIdToChange) === adminId) {
+        return res.status(403).json({ message: 'Bạn không thể tự thay đổi quyền của chính mình.' });
+    }
+
+    try {
+        await db.execute('UPDATE users SET role = ? WHERE id = ?', [newRole, userIdToChange]);
+        res.json({ message: `Thành công! Đã thay đổi quyền user thành ${newRole.toUpperCase()}.` });
+    } catch (error) {
+        console.error("Lỗi changeUserRole:", error);
+        res.status(500).json({ message: 'Lỗi server khi thay đổi quyền.' });
+    }
 };
 
 exports.getManagedComics = async (req, res) => {
@@ -357,37 +519,10 @@ exports.getPublicComicSettings = async (req, res) => {
         res.status(500).json({});
     }
 };
-exports.changeUserRole = async (req, res) => {
-    const userIdToChange = req.params.id;
-    const { newRole } = req.body;
-    const adminId = req.user.id; // ID của admin đang thực hiện thao tác (lấy từ token)
 
-    // 1. Validate role hợp lệ
-    if (!['user', 'admin'].includes(newRole)) {
-        return res.status(400).json({ message: 'Role không hợp lệ. Chỉ chấp nhận "user" hoặc "admin".' });
-    }
-
-    // 2. BẢO MẬT QUAN TRỌNG: Ngăn chặn admin tự thay đổi role của chính mình
-    // userIdToChange là string từ params, adminId là number từ token -> cần ép kiểu để so sánh
-    if (parseInt(userIdToChange) === adminId) {
-        return res.status(403).json({ message: 'Bạn không thể tự thay đổi quyền của chính mình để đảm bảo an toàn.' });
-    }
-
-    try {
-        // Thực hiện cập nhật role
-        await db.execute('UPDATE users SET role = ? WHERE id = ?', [newRole, userIdToChange]);
-        res.json({ message: `Thành công! Đã thay đổi quyền user thành ${newRole.toUpperCase()}.` });
-
-    } catch (error) {
-        console.error("Lỗi changeUserRole:", error);
-        res.status(500).json({ message: 'Lỗi server khi thay đổi quyền.' });
-    }
-};
-
-// [ADMIN] Lấy danh sách tất cả người dùng (CÓ PHÂN TRANG)
+// [ADMIN] Lấy danh sách tất cả người dùng (CÓ PHÂN TRANG) - FIX LỖI LIMIT
 exports.getAllUsers = async (req, res) => {
     try {
-        // 1. Xử lý và Validate tham số phân trang
         let page = parseInt(req.query.page);
         let limit = parseInt(req.query.limit);
 
@@ -396,13 +531,11 @@ exports.getAllUsers = async (req, res) => {
 
         const offset = (page - 1) * limit;
 
-        // 2. Đếm tổng số lượng user
         const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
         const totalUsers = countResult[0].total;
         const totalPages = Math.ceil(totalUsers / limit);
 
-        // 3. Truy vấn dữ liệu - DÙNG TEMPLATE LITERAL ĐỂ TRÁNH LỖI LIMIT CỦA MYSQL2
-        // (An toàn vì limit và offset đã được validate là số ở trên)
+        // Dùng template literal cho LIMIT/OFFSET để tránh lỗi của mysql2 driver
         const query = `
             SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
             FROM users 
@@ -412,7 +545,6 @@ exports.getAllUsers = async (req, res) => {
 
         const [rows] = await db.execute(query);
 
-        // 4. Trả về kết quả
         res.json({
             data: rows,
             pagination: {
