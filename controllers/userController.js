@@ -358,45 +358,33 @@ exports.getPublicComicSettings = async (req, res) => {
     }
 };
 
-// [ADMIN] Lấy danh sách tất cả người dùng (CÓ PHÂN TRANG)
-// Hàm này ĐƯỢC ĐẶT Ở CUỐI CÙNG và CHỈ XUẤT HIỆN 1 LẦN
+// [ADMIN] Lấy danh sách tất cả người dùng (CÓ PHÂN TRANG) - FIX LỖI LIMIT
 exports.getAllUsers = async (req, res) => {
     try {
-        console.log("Đang xử lý getAllUsers với query:", req.query); // Log để debug trên Render
+        // 1. Xử lý và Validate tham số phân trang
+        let page = parseInt(req.query.page);
+        let limit = parseInt(req.query.limit);
 
-        // 1. Xử lý tham số phân trang MỘT CÁCH CHẮC CHẮN NHẤT
-        // Lấy giá trị raw
-        let rawPage = req.query.page;
-        let rawLimit = req.query.limit;
-
-        // Ép kiểu sang số nguyên
-        let page = parseInt(rawPage);
-        let limit = parseInt(rawLimit);
-
-        // Validate: Nếu không phải số hợp lệ (NaN) hoặc nhỏ hơn 1 thì dùng giá trị mặc định
         if (isNaN(page) || page < 1) page = 1;
-        if (isNaN(limit) || limit < 1 || limit > 100) limit = 10; // Giới hạn max limit để an toàn
-        
-        // Tính toán offset, đảm bảo nó là một số dương
-        const offset = (page - 1) * limit;
+        if (isNaN(limit) || limit < 1 || limit > 100) limit = 10;
 
-        console.log(`Parsed -> Page: ${page}, Limit: ${limit}, Offset: ${offset} (Types: ${typeof page}, ${typeof limit}, ${typeof offset})`);
+        const offset = (page - 1) * limit;
 
         // 2. Đếm tổng số lượng user
         const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
         const totalUsers = countResult[0].total;
         const totalPages = Math.ceil(totalUsers / limit);
 
-        // 3. Truy vấn dữ liệu với LIMIT và OFFSET
-        // QUAN TRỌNG NHẤT: Ép kiểu Number() một lần nữa NGAY TRONG mảng tham số
-        // Điều này bắt buộc driver MySQL phải hiểu đây là số.
-        const [rows] = await db.execute(
-            `SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
-             FROM users 
-             ORDER BY created_at DESC 
-             LIMIT ? OFFSET ?`,
-            [Number(limit), Number(offset)] // <--- ĐÂY LÀ CHÌA KHÓA KHẮC PHỤC LỖI
-        );
+        // 3. Truy vấn dữ liệu - DÙNG TEMPLATE LITERAL ĐỂ TRÁNH LỖI LIMIT CỦA MYSQL2
+        // (An toàn vì limit và offset đã được validate là số ở trên)
+        const query = `
+            SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
+            FROM users 
+            ORDER BY created_at DESC 
+            LIMIT ${limit} OFFSET ${offset}
+        `;
+
+        const [rows] = await db.execute(query);
 
         // 4. Trả về kết quả
         res.json({
@@ -410,14 +398,7 @@ exports.getAllUsers = async (req, res) => {
         });
 
     } catch (e) {
-        // Log lỗi chi tiết ra server logs trên Render để biết chính xác lỗi SQL là gì
-        console.error("LỖI CRITICAL tại getAllUsers (Admin):");
-        console.error("- Message:", e.message);
-        // Nếu có lỗi SQL cụ thể, log nó ra
-        if (e.sqlMessage) console.error("- SQL Message:", e.sqlMessage);
-        if (e.sql) console.error("- SQL Query bị lỗi:", e.sql);
-        
-        // Trả về thông báo lỗi chung chung cho frontend
-        res.status(500).json({ message: 'Lỗi server khi lấy danh sách user. Vui lòng kiểm tra log server.' });
+        console.error("LỖI CRITICAL tại getAllUsers (Admin):", e);
+        res.status(500).json({ message: 'Lỗi server khi lấy danh sách user.' });
     }
 };
