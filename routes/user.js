@@ -49,7 +49,7 @@ router.delete('/admin/users/:id', authMiddleware, adminMiddleware, deleteUser);
 router.post('/admin/users/:id/warn', authMiddleware, adminMiddleware, warnUser);
 router.post('/admin/users/:id/ban', authMiddleware, adminMiddleware, banUser);
 router.post('/admin/users/:id/unban', authMiddleware, adminMiddleware, unbanUser);
-
+router.put('/admin/users/:id/role', authMiddleware, adminMiddleware, userController.changeUserRole);
 // Route Quản lý Truyện (Admin)
 router.get('/admin/comics', authMiddleware, adminMiddleware, getManagedComics);
 router.post('/admin/comics', authMiddleware, adminMiddleware, updateComicSetting);

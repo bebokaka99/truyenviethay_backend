@@ -357,6 +357,32 @@ exports.getPublicComicSettings = async (req, res) => {
         res.status(500).json({});
     }
 };
+exports.changeUserRole = async (req, res) => {
+    const userIdToChange = req.params.id;
+    const { newRole } = req.body;
+    const adminId = req.user.id; // ID của admin đang thực hiện thao tác (lấy từ token)
+
+    // 1. Validate role hợp lệ
+    if (!['user', 'admin'].includes(newRole)) {
+        return res.status(400).json({ message: 'Role không hợp lệ. Chỉ chấp nhận "user" hoặc "admin".' });
+    }
+
+    // 2. BẢO MẬT QUAN TRỌNG: Ngăn chặn admin tự thay đổi role của chính mình
+    // userIdToChange là string từ params, adminId là number từ token -> cần ép kiểu để so sánh
+    if (parseInt(userIdToChange) === adminId) {
+        return res.status(403).json({ message: 'Bạn không thể tự thay đổi quyền của chính mình để đảm bảo an toàn.' });
+    }
+
+    try {
+        // Thực hiện cập nhật role
+        await db.execute('UPDATE users SET role = ? WHERE id = ?', [newRole, userIdToChange]);
+        res.json({ message: `Thành công! Đã thay đổi quyền user thành ${newRole.toUpperCase()}.` });
+
+    } catch (error) {
+        console.error("Lỗi changeUserRole:", error);
+        res.status(500).json({ message: 'Lỗi server khi thay đổi quyền.' });
+    }
+};
 
 // [ADMIN] Lấy danh sách tất cả người dùng (CÓ PHÂN TRANG) - FIX LỖI LIMIT
 exports.getAllUsers = async (req, res) => {
