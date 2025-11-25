@@ -384,7 +384,7 @@ exports.changeUserRole = async (req, res) => {
     }
 };
 
-// [ADMIN] Lấy danh sách tất cả người dùng (CÓ PHÂN TRANG) - FIX LỖI LIMIT
+// [ADMIN] Lấy danh sách tất cả người dùng (CÓ PHÂN TRANG)
 exports.getAllUsers = async (req, res) => {
     try {
         // 1. Xử lý và Validate tham số phân trang
