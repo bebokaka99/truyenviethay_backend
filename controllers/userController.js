@@ -362,28 +362,40 @@ exports.getPublicComicSettings = async (req, res) => {
 // Hàm này ĐƯỢC ĐẶT Ở CUỐI CÙNG và CHỈ XUẤT HIỆN 1 LẦN
 exports.getAllUsers = async (req, res) => {
     try {
-        // 1. Lấy tham số page và limit từ query string
-        const page = parseInt(req.query.page) || 1; // Trang mặc định là 1
-        const limit = parseInt(req.query.limit) || 10; // Mặc định 10 user mỗi trang
-        const offset = (page - 1) * limit; // Tính vị trí bắt đầu lấy dữ liệu
+        console.log("Đang xử lý getAllUsers với query:", req.query); // Log để debug
 
-        // 2. Đếm tổng số lượng user để tính tổng số trang
+        // 1. Xử lý tham số phân trang MỘT CÁCH CHẮC CHẮN NHẤT
+        // Sử dụng Number() để ép kiểu, an toàn hơn parseInt trong một số trường hợp
+        let page = Number(req.query.page);
+        let limit = Number(req.query.limit);
+
+        // Validate: Nếu không phải số hợp lệ (NaN) hoặc nhỏ hơn 1 thì dùng giá trị mặc định
+        if (isNaN(page) || page < 1) page = 1;
+        if (isNaN(limit) || limit < 1) limit = 10;
+        
+        // Tính toán offset, đảm bảo nó là một số dương
+        const offset = Math.max(0, (page - 1) * limit);
+
+        console.log(`Page: ${page}, Limit: ${limit}, Offset: ${offset}`); // Log kiểm tra giá trị cuối
+
+        // 2. Đếm tổng số lượng user
         const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
         const totalUsers = countResult[0].total;
         const totalPages = Math.ceil(totalUsers / limit);
 
-        // 3. Truy vấn dữ liệu có sử dụng LIMIT và OFFSET
+        // 3. Truy vấn dữ liệu với LIMIT và OFFSET
+        // QUAN TRỌNG: Ép kiểu Number() một lần nữa ngay trong mảng tham số để chắc chắn driver nhận diện đúng
         const [rows] = await db.execute(
             `SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
              FROM users 
              ORDER BY created_at DESC 
              LIMIT ? OFFSET ?`,
-            [limit, offset]
+            [Number(limit), Number(offset)] // <--- Ép kiểu an toàn tại đây
         );
 
-        // 4. Trả về cấu trúc dữ liệu mới gồm data và pagination
+        // 4. Trả về kết quả
         res.json({
-            data: rows,         // Danh sách user của trang hiện tại
+            data: rows,
             pagination: {
                 currentPage: page,
                 limit: limit,
@@ -393,7 +405,11 @@ exports.getAllUsers = async (req, res) => {
         });
 
     } catch (e) {
-        console.error("Lỗi getAllUsers (Admin):", e);
-        res.status(500).json({ message: 'Lỗi server' });
+        // Log lỗi chi tiết ra server logs trên Render để biết chính xác lỗi SQL là gì
+        console.error("Lỗi CRITICAL tại getAllUsers (Admin):", e.message);
+        // Nếu có lỗi SQL cụ thể, log nó ra
+        if (e.sqlMessage) console.error("SQL Error Message:", e.sqlMessage);
+        
+        res.status(500).json({ message: 'Lỗi server khi lấy danh sách user.' });
     }
 };
