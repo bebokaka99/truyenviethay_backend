@@ -71,4 +71,6 @@ router.get('/admin/comics', authMiddleware, adminMiddleware, userController.getM
 // Cập nhật cấu hình cho một truyện
 router.post('/admin/comics', authMiddleware, adminMiddleware, userController.updateComicSetting);
 
+router.get('/public/settings', userController.getPublicComicSettings);
+
 module.exports = router;
