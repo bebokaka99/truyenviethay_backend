@@ -10,40 +10,18 @@ exports.submitRating = async (req, res) => {
     }
 
     try {
-        // BƯỚC 1: Kiểm tra xem user đã đánh giá truyện này chưa
-        const [existing] = await db.execute(
-            'SELECT id FROM ratings WHERE user_id = ? AND comic_slug = ?',
-            [userId, comic_slug]
+        // BƯỚC 1 & 2: Dùng câu lệnh "INSERT ... ON DUPLICATE KEY UPDATE"
+        // Yêu cầu: Bảng 'ratings' phải có UNIQUE INDEX trên cặp (user_id, comic_slug)
+        // Nếu bạn đã làm theo hướng dẫn tạo bảng trước đây thì đã có rồi.
+        await db.execute(
+            `INSERT INTO ratings (user_id, comic_slug, score, created_at) 
+             VALUES (?, ?, ?, NOW()) 
+             ON DUPLICATE KEY UPDATE score = VALUES(score), created_at = NOW()`,
+            [userId, comic_slug, score]
         );
 
-        if (existing.length > 0) {
-            // --- TRƯỜNG HỢP 1: ĐÃ CÓ -> CẬP NHẬT (UPDATE) ---
-            await db.execute(
-                'UPDATE ratings SET score = ?, created_at = NOW() WHERE id = ?',
-                [score, existing[0].id]
-            );
-        } else {
-            // --- TRƯỜNG HỢP 2: CHƯA CÓ -> THÊM MỚI (INSERT) ---
-            try {
-                await db.execute(
-                    'INSERT INTO ratings (user_id, comic_slug, score, created_at) VALUES (?, ?, ?, NOW())',
-                    [userId, comic_slug, score]
-                );
-            } catch (insertError) {
-                // Phòng trường hợp race condition (vừa check chưa có, nhưng 1ms sau đã có)
-                // Nếu lỗi là trùng lặp (Duplicate entry), ta quay lại Update
-                if (insertError.code === 'ER_DUP_ENTRY') {
-                    await db.execute(
-                        'UPDATE ratings SET score = ?, created_at = NOW() WHERE user_id = ? AND comic_slug = ?',
-                        [score, userId, comic_slug]
-                    );
-                } else {
-                    throw insertError; // Lỗi khác thì ném ra ngoài
-                }
-            }
-        }
-        
         // BƯỚC 3: Tính toán lại điểm trung bình để trả về Frontend
+        // (Phần này giữ nguyên)
         const [avgRows] = await db.execute(
             'SELECT AVG(score) as avg_score, COUNT(*) as total_votes FROM ratings WHERE comic_slug = ?', 
             [comic_slug]
@@ -60,9 +38,12 @@ exports.submitRating = async (req, res) => {
 
     } catch (error) {
         console.error("Lỗi submitRating:", error);
+        // Kiểm tra lại lỗi, nếu vẫn là lỗi khác thì báo lỗi server
         res.status(500).json({ message: 'Lỗi server khi đánh giá' });
     }
 };
+
+// ... (Các hàm getComicRating và getTopRatings giữ nguyên không thay đổi)
 // 2. LẤY THÔNG TIN ĐÁNH GIÁ (Của truyện & Của User)
 exports.getComicRating = async (req, res) => {
     const { comic_slug } = req.params;
@@ -102,7 +83,7 @@ exports.getTopRatings = async (req, res) => {
     const { type } = req.query; // daily | weekly | monthly | all
     
     const m = 10; // (Minimum votes): Số vote tối thiểu để điểm số được tin cậy.
-                 // Truyện ít hơn 5 vote sẽ bị kéo điểm về mức trung bình toàn sàn.
+                  // Truyện ít hơn 5 vote sẽ bị kéo điểm về mức trung bình toàn sàn.
 
     let timeCondition = "";
     if (type === 'daily') {
