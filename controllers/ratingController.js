@@ -1,27 +1,39 @@
 const db = require('../config/db');
 
+// 1. GỬI ĐÁNH GIÁ (BẢN VÁ LỖI CHO ANDROID)
 exports.submitRating = async (req, res) => {
     const userId = req.user.id;
-    const { comic_slug, score } = req.body;
+    // Lấy raw data từ body
+    let { comic_slug, score } = req.body;
 
-    // Validate
-    if (!score || isNaN(score) || score < 0.5 || score > 5) {
+    // --- DEBUG LOG ---
+    // Giúp xem chính xác Android gửi dữ liệu dạng gì lên server
+    console.log(`[RATING SUBMIT - DEBUG] User: ${userId}, Slug: ${comic_slug}, Raw Score:`, score, `Type: ${typeof score}`);
+    // -----------------
+
+    // BƯỚC XỬ LÝ QUAN TRỌNG:
+    // 1. Ép kiểu về số thực (float). Nó xử lý tốt cả đầu vào là số 4.5 hoặc chuỗi "4.5".
+    let numericScore = parseFloat(score);
+
+    // 2. Validate dựa trên giá trị số đã ép kiểu
+    // Kiểm tra: Nếu kết quả không phải là số (NaN), HOẶC < 0.5, HOẶC > 5 thì báo lỗi
+    if (isNaN(numericScore) || numericScore < 0.5 || numericScore > 5) {
+        console.error(`[RATING ERROR] Invalid score. Raw: ${score}, Parsed: ${numericScore}`);
         return res.status(400).json({ message: 'Điểm đánh giá không hợp lệ' });
     }
 
     try {
-        // BƯỚC 1 & 2: Dùng câu lệnh "INSERT ... ON DUPLICATE KEY UPDATE"
-        // Yêu cầu: Bảng 'ratings' phải có UNIQUE INDEX trên cặp (user_id, comic_slug)
-        // Nếu bạn đã làm theo hướng dẫn tạo bảng trước đây thì đã có rồi.
+        // BƯỚC 3: Lưu vào DB
+        // Sử dụng câu lệnh tối ưu: Nếu chưa có thì INSERT, nếu có rồi thì UPDATE.
+        // Yêu cầu: Bảng 'ratings' phải có UNIQUE INDEX (user_id, comic_slug).
         await db.execute(
             `INSERT INTO ratings (user_id, comic_slug, score, created_at) 
              VALUES (?, ?, ?, NOW()) 
              ON DUPLICATE KEY UPDATE score = VALUES(score), created_at = NOW()`,
-            [userId, comic_slug, score]
+            [userId, comic_slug, numericScore] // <-- Dùng giá trị đã chuẩn hóa
         );
 
-        // BƯỚC 3: Tính toán lại điểm trung bình để trả về Frontend
-        // (Phần này giữ nguyên)
+        // BƯỚC 4: Tính toán lại điểm trung bình mới nhất để trả về Frontend
         const [avgRows] = await db.execute(
             'SELECT AVG(score) as avg_score, COUNT(*) as total_votes FROM ratings WHERE comic_slug = ?', 
             [comic_slug]
@@ -38,12 +50,10 @@ exports.submitRating = async (req, res) => {
 
     } catch (error) {
         console.error("Lỗi submitRating:", error);
-        // Kiểm tra lại lỗi, nếu vẫn là lỗi khác thì báo lỗi server
         res.status(500).json({ message: 'Lỗi server khi đánh giá' });
     }
 };
 
-// ... (Các hàm getComicRating và getTopRatings giữ nguyên không thay đổi)
 // 2. LẤY THÔNG TIN ĐÁNH GIÁ (Của truyện & Của User)
 exports.getComicRating = async (req, res) => {
     const { comic_slug } = req.params;
@@ -78,12 +88,12 @@ exports.getComicRating = async (req, res) => {
         res.status(500).json({ message: 'Lỗi server' }); 
     }
 };
+
 // 3. BẢNG XẾP HẠNG (Sử dụng Bayesian Average)
 exports.getTopRatings = async (req, res) => {
     const { type } = req.query; // daily | weekly | monthly | all
     
     const m = 10; // (Minimum votes): Số vote tối thiểu để điểm số được tin cậy.
-                  // Truyện ít hơn 5 vote sẽ bị kéo điểm về mức trung bình toàn sàn.
 
     let timeCondition = "";
     if (type === 'daily') {
@@ -98,8 +108,7 @@ exports.getTopRatings = async (req, res) => {
         const [globalStats] = await db.execute("SELECT AVG(score) as global_avg FROM ratings");
         const C = parseFloat(globalStats[0].global_avg || 3.0); 
 
-        // 2. Truy vấn và Tính toán Bayesian Rating (Weighted Rating)
-        // Công thức: (v / (v+m)) * R + (m / (v+m)) * C
+        // Công thức Bayesian Rating
         const sql = `
             SELECT 
                 comic_slug, 
@@ -116,14 +125,10 @@ exports.getTopRatings = async (req, res) => {
 
         const [rows] = await db.execute(sql, [m, m, m, C]);
         
-        // 3. Format dữ liệu trả về
         const formattedRows = rows.map(row => ({
             comic_slug: row.comic_slug,
             total_votes: row.total_votes,
-            
             avg_score: parseFloat(row.weighted_score).toFixed(1), 
-            
-            // Trả thêm điểm gốc (raw) nếu bạn muốn hiển thị tooltip "Điểm thực: 5.0"
             raw_score: parseFloat(row.raw_avg).toFixed(1)
         }));
 
