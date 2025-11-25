@@ -286,45 +286,7 @@ exports.changePassword = async (req, res) => {
     } catch (error) { res.status(500).json({ message: 'Lỗi server' }); }
 };
 
-
 exports.getAllUsers = async (req, res) => {
-    try {
-        // 1. Lấy tham số page và limit từ query string
-        const page = parseInt(req.query.page) || 1; // Trang mặc định là 1
-        const limit = parseInt(req.query.limit) || 10; // Mặc định 10 user mỗi trang
-        const offset = (page - 1) * limit; // Tính vị trí bắt đầu lấy dữ liệu
-
-        // 2. Đếm tổng số lượng user để tính tổng số trang
-        const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
-        const totalUsers = countResult[0].total;
-        const totalPages = Math.ceil(totalUsers / limit);
-
-        // 3. Truy vấn dữ liệu có sử dụng LIMIT và OFFSET
-        // LƯU Ý: Sử dụng tham số hóa (?) cho LIMIT và OFFSET để bảo mật
-        const [rows] = await db.execute(
-            `SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
-             FROM users 
-             ORDER BY created_at DESC 
-             LIMIT ? OFFSET ?`,
-            [limit, offset]
-        );
-
-        // 4. Trả về cấu trúc dữ liệu mới gồm data và pagination
-        res.json({
-            data: rows,         // Danh sách user của trang hiện tại
-            pagination: {
-                currentPage: page,
-                limit: limit,
-                totalUsers: totalUsers,
-                totalPages: totalPages
-            }
-        });
-
-    } catch (e) {
-        console.error("Lỗi getAllUsers (Admin):", e);
-        res.status(500).json({ message: 'Lỗi server' });
-    }
-};exports.getAllUsers = async (req, res) => {
     try {
         // 1. Lấy tham số page và limit từ query string
         const page = parseInt(req.query.page) || 1; // Trang mặc định là 1
