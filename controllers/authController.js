@@ -120,7 +120,7 @@ exports.login = async (req, res) => {
         );
         
         if (users.length === 0) {
-            return res.status(400).json({ message: 'Tài khoản không tồn tại!' });
+            return res.status(400).json({ message: 'Tài khoản không tồn tại hoặc mật khẩu không đúng!' });
         }
 
         const user = users[0];
@@ -142,7 +142,7 @@ exports.login = async (req, res) => {
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            return res.status(400).json({ message: 'Mật khẩu không đúng!' });
+            return res.status(400).json({ message: 'Tài khoản không tồn tại hoặc mật khẩu không đúng!' });
         }
         
         // Kích hoạt logic điểm danh (Chỉ cho User thường)
