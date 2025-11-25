@@ -362,21 +362,25 @@ exports.getPublicComicSettings = async (req, res) => {
 // Hàm này ĐƯỢC ĐẶT Ở CUỐI CÙNG và CHỈ XUẤT HIỆN 1 LẦN
 exports.getAllUsers = async (req, res) => {
     try {
-        console.log("Đang xử lý getAllUsers với query:", req.query); // Log để debug
+        console.log("Đang xử lý getAllUsers với query:", req.query); // Log để debug trên Render
 
         // 1. Xử lý tham số phân trang MỘT CÁCH CHẮC CHẮN NHẤT
-        // Sử dụng Number() để ép kiểu, an toàn hơn parseInt trong một số trường hợp
-        let page = Number(req.query.page);
-        let limit = Number(req.query.limit);
+        // Lấy giá trị raw
+        let rawPage = req.query.page;
+        let rawLimit = req.query.limit;
+
+        // Ép kiểu sang số nguyên
+        let page = parseInt(rawPage);
+        let limit = parseInt(rawLimit);
 
         // Validate: Nếu không phải số hợp lệ (NaN) hoặc nhỏ hơn 1 thì dùng giá trị mặc định
         if (isNaN(page) || page < 1) page = 1;
-        if (isNaN(limit) || limit < 1) limit = 10;
+        if (isNaN(limit) || limit < 1 || limit > 100) limit = 10; // Giới hạn max limit để an toàn
         
         // Tính toán offset, đảm bảo nó là một số dương
-        const offset = Math.max(0, (page - 1) * limit);
+        const offset = (page - 1) * limit;
 
-        console.log(`Page: ${page}, Limit: ${limit}, Offset: ${offset}`); // Log kiểm tra giá trị cuối
+        console.log(`Parsed -> Page: ${page}, Limit: ${limit}, Offset: ${offset} (Types: ${typeof page}, ${typeof limit}, ${typeof offset})`);
 
         // 2. Đếm tổng số lượng user
         const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
@@ -384,13 +388,14 @@ exports.getAllUsers = async (req, res) => {
         const totalPages = Math.ceil(totalUsers / limit);
 
         // 3. Truy vấn dữ liệu với LIMIT và OFFSET
-        // QUAN TRỌNG: Ép kiểu Number() một lần nữa ngay trong mảng tham số để chắc chắn driver nhận diện đúng
+        // QUAN TRỌNG NHẤT: Ép kiểu Number() một lần nữa NGAY TRONG mảng tham số
+        // Điều này bắt buộc driver MySQL phải hiểu đây là số.
         const [rows] = await db.execute(
             `SELECT id, username, email, full_name, role, status, warnings, ban_expires_at, created_at 
              FROM users 
              ORDER BY created_at DESC 
              LIMIT ? OFFSET ?`,
-            [Number(limit), Number(offset)] // <--- Ép kiểu an toàn tại đây
+            [Number(limit), Number(offset)] // <--- ĐÂY LÀ CHÌA KHÓA KHẮC PHỤC LỖI
         );
 
         // 4. Trả về kết quả
@@ -406,10 +411,13 @@ exports.getAllUsers = async (req, res) => {
 
     } catch (e) {
         // Log lỗi chi tiết ra server logs trên Render để biết chính xác lỗi SQL là gì
-        console.error("Lỗi CRITICAL tại getAllUsers (Admin):", e.message);
+        console.error("LỖI CRITICAL tại getAllUsers (Admin):");
+        console.error("- Message:", e.message);
         // Nếu có lỗi SQL cụ thể, log nó ra
-        if (e.sqlMessage) console.error("SQL Error Message:", e.sqlMessage);
+        if (e.sqlMessage) console.error("- SQL Message:", e.sqlMessage);
+        if (e.sql) console.error("- SQL Query bị lỗi:", e.sql);
         
-        res.status(500).json({ message: 'Lỗi server khi lấy danh sách user.' });
+        // Trả về thông báo lỗi chung chung cho frontend
+        res.status(500).json({ message: 'Lỗi server khi lấy danh sách user. Vui lòng kiểm tra log server.' });
     }
 };
