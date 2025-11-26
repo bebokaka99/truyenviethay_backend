@@ -1,28 +1,27 @@
-const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const axios = require('axios'); 
-const { createNotificationInternal } = require('./notificationController');
+const axios = require('axios');
+const db = require('../config/db');
 
-// Import helper updateQuestProgress từ userController
-const { updateQuestProgress } = require('./userController'); 
+// Import helper từ userController
+const { updateQuestProgress } = require('./userController');
 
-// Hàm gửi email qua API Brevo (Sendinblue cũ)
+// Helper function (Hàm phụ trợ)
+
+// 1. Gửi email qua API Brevo
 const sendEmailViaBrevo = async (toEmail, subject, htmlContent) => {
-    // Lấy API Key từ biến môi trường 
-    const apiKey = process.env.EMAIL_PASS; 
-    
-    const senderEmail = process.env.EMAIL_USER; 
-    const senderName = "TruyenVietHay Support";
-
-    const data = {
-        sender: { name: senderName, email: senderEmail },
-        to: [{ email: toEmail }],
-        subject: subject,
-        htmlContent: htmlContent
-    };
-
     try {
+        const apiKey = process.env.EMAIL_PASS;
+        const senderEmail = process.env.EMAIL_USER;
+        const senderName = "TruyenVietHay Support";
+
+        const data = {
+            sender: { name: senderName, email: senderEmail },
+            to: [{ email: toEmail }],
+            subject: subject,
+            htmlContent: htmlContent
+        };
+
         await axios.post('https://api.brevo.com/v3/smtp/email', data, {
             headers: {
                 'api-key': apiKey,
@@ -34,59 +33,44 @@ const sendEmailViaBrevo = async (toEmail, subject, htmlContent) => {
         return true;
     } catch (error) {
         console.error("Lỗi API Brevo:", error.response ? error.response.data : error.message);
-        // Không ném lỗi ra ngoài để tránh crash luồng chính, chỉ log lỗi
         return false;
     }
 };
-// Logic điểm danh và streak
+
+// 2. Xử lý điểm danh & Streak
 const handleLoginStreaks = async (userId) => {
     try {
-        // 1. Lấy thông tin đăng nhập lần cuối
         const [rows] = await db.execute(
-            "SELECT login_streak, last_login_date, DATEDIFF(CURRENT_DATE(), last_login_date) as diff FROM users WHERE id = ?", 
+            "SELECT login_streak, last_login_date, DATEDIFF(CURRENT_DATE(), last_login_date) as diff FROM users WHERE id = ?",
             [userId]
         );
         const user = rows[0];
-        
         let newStreak = 1;
-        const diff = user.last_login_date ? user.diff : null; 
+        const diff = user.last_login_date ? user.diff : null;
 
-        // Logic tính toán Streak
-        if (diff === 0) {
-            // Đã login hôm nay -> Giữ nguyên
-            newStreak = user.login_streak;
-        } else if (diff === 1) {
-            // Login liên tiếp -> Tăng 1
-            newStreak = user.login_streak + 1;
-        } else {
-            // Mất chuỗi hoặc lần đầu -> Reset về 1
-            newStreak = 1;
-        }
+        if (diff === 0) newStreak = user.login_streak; // Login cùng ngày
+        else if (diff === 1) newStreak = user.login_streak + 1; // Login liên tiếp
+        else newStreak = 1; // Mất chuỗi
 
-        // 2. Cập nhật bảng Users (Chỉ update nếu là ngày mới)
+        // Cập nhật DB nếu sang ngày mới
         if (diff !== 0) {
             await db.execute("UPDATE users SET login_streak = ?, last_login_date = CURRENT_DATE() WHERE id = ?", [newStreak, userId]);
         }
 
-        // 3. Cập nhật Nhiệm vụ
-        // A. Daily Login: Luôn gọi, hàm helper sẽ tự check reset nếu cần
-        await updateQuestProgress(userId, 'login', 1); 
-
-        // B. Weekly Streak: Truyền giá trị streak thực tế vào
+        // Cập nhật nhiệm vụ
+        await updateQuestProgress(userId, 'login', 1);
         await updateQuestProgress(userId, 'streak', newStreak);
-
     } catch (error) {
         console.error("Lỗi streak:", error);
     }
 };
 
-// Đăng ký tài khoản
+// Main controller
+
 exports.register = async (req, res) => {
     const { username, email, password, full_name } = req.body;
-
     try {
         const [existingUser] = await db.execute('SELECT * FROM users WHERE email = ? OR username = ?', [email, username]);
-        
         if (existingUser.length > 0) {
             return res.status(400).json({ message: 'Email hoặc Username đã tồn tại!' });
         }
@@ -98,61 +82,48 @@ exports.register = async (req, res) => {
             'INSERT INTO users (username, email, password, full_name) VALUES (?, ?, ?, ?)',
             [username, email, hashedPassword, full_name]
         );
-
         res.status(201).json({ message: 'Đăng ký thành công! Hãy đăng nhập ngay.' });
-
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Lỗi server khi đăng ký.' });
     }
 };
-// Đăng nhập tài khoản
+
 exports.login = async (req, res) => {
-    // Frontend gửi 'identifier', check cả 'email' để tương thích ngược
     const { identifier, email, password } = req.body;
-    const loginKey = identifier || email;
+    const loginKey = identifier || email; // Hỗ trợ cả 2 cách gửi
 
     try {
-        // Tìm user theo email HOẶC username
         const [users] = await db.execute(
-            'SELECT id, username, email, full_name, avatar, role, exp, rank_style, password, status, ban_expires_at FROM users WHERE email = ? OR username = ?', 
+            'SELECT id, username, email, full_name, avatar, role, exp, rank_style, password, status, ban_expires_at FROM users WHERE email = ? OR username = ?',
             [loginKey, loginKey]
         );
-        
-        if (users.length === 0) {
-            return res.status(400).json({ message: 'Tài khoản không tồn tại hoặc mật khẩu không đúng!' });
-        }
+
+        if (users.length === 0) return res.status(400).json({ message: 'Tài khoản không tồn tại hoặc mật khẩu không đúng!' });
 
         const user = users[0];
 
-        // Kiểm tra BAN
+        // Check Ban
         if (user.status === 'banned') {
             const now = new Date();
             if (user.ban_expires_at) {
                 const banTime = new Date(user.ban_expires_at);
-                if (banTime > now) {
-                    return res.status(403).json({ message: `Tài khoản bị khóa đến ${banTime.toLocaleString('vi-VN')}` });
-                } else {
-                    await db.execute("UPDATE users SET status = 'active', ban_expires_at = NULL WHERE id = ?", [user.id]);
-                }
+                if (banTime > now) return res.status(403).json({ message: `Tài khoản bị khóa đến ${banTime.toLocaleString('vi-VN')}` });
+                else await db.execute("UPDATE users SET status = 'active', ban_expires_at = NULL WHERE id = ?", [user.id]); // Auto unlock
             } else {
                 return res.status(403).json({ message: 'Tài khoản bị khóa vĩnh viễn.' });
             }
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) {
-            return res.status(400).json({ message: 'Tài khoản không tồn tại hoặc mật khẩu không đúng!' });
-        }
-        
-        // Kích hoạt logic điểm danh (Chỉ cho User thường)
-        if (user.role === 'user') {
-            await handleLoginStreaks(user.id);
-        }
+        if (!isMatch) return res.status(400).json({ message: 'Tài khoản không tồn tại hoặc mật khẩu không đúng!' });
+
+        // Handle Streaks (User only)
+        if (user.role === 'user') await handleLoginStreaks(user.id);
 
         const token = jwt.sign(
-            { id: user.id, role: user.role }, 
-            process.env.JWT_SECRET, 
+            { id: user.id, role: user.role },
+            process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
 
@@ -165,18 +136,16 @@ exports.login = async (req, res) => {
                 full_name: user.full_name,
                 avatar: user.avatar,
                 role: user.role,
-                exp: user.exp, 
-                rank_style: user.rank_style 
+                exp: user.exp,
+                rank_style: user.rank_style
             }
         });
-
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Lỗi server khi đăng nhập.' });
     }
 };
 
-// Quên mật khẩu (Gửi OTP qua API Brevo)
 exports.forgotPassword = async (req, res) => {
     const { email } = req.body;
     try {
@@ -185,97 +154,80 @@ exports.forgotPassword = async (req, res) => {
 
         const user = users[0];
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        
-        // Lưu OTP vào DB (Dùng hàm SQL DATE_ADD để tính giờ server DB, tránh lệch múi giờ)
+
+        // Save OTP (15 mins expiry)
         await db.execute(
-            'INSERT INTO password_resets (email, otp, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))', 
+            'INSERT INTO password_resets (email, otp, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))',
             [email, otp]
         );
 
-        // Nội dung Email HTML Chuyên nghiệp
-        const htmlContent = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f7; margin: 0; padding: 0; }
-                    .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-top: 40px; }
-                    .header { background-color: #1a1a2e; padding: 30px; text-align: center; }
-                    .header h1 { color: #ffffff; margin: 0; font-size: 24px; letter-spacing: 1px; }
-                    .content { padding: 40px 30px; color: #333333; line-height: 1.6; }
-                    .otp-box { background-color: #f0fdf4; border: 2px dashed #16a34a; color: #16a34a; font-size: 32px; font-weight: bold; text-align: center; padding: 15px; margin: 30px 0; letter-spacing: 8px; border-radius: 8px; }
-                    .warning { font-size: 13px; color: #666666; background-color: #fff7ed; padding: 15px; border-radius: 6px; border-left: 4px solid #f97316; margin-top: 20px; }
-                    .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>TruyenVietHay</h1>
-                    </div>
-                    <div class="content">
-                        <p>Xin chào <strong>${user.full_name}</strong>,</p>
-                        <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn. Vui lòng sử dụng mã xác nhận bên dưới để hoàn tất quá trình:</p>
-                        
-                        <div class="otp-box">${otp}</div>
-                        
-                        <p>Mã này sẽ hết hạn sau <strong>15 phút</strong>.</p>
-                        
-                        <div class="warning">
-                            <strong>Lưu ý:</strong> Nếu bạn không yêu cầu thay đổi mật khẩu, vui lòng bỏ qua email này. Tuyệt đối không chia sẻ mã này cho bất kỳ ai.
-                        </div>
-                    </div>
-                    <div class="footer">
-                        &copy; ${new Date().getFullYear()} TruyenVietHay. All rights reserved.<br>
-                        Đây là email tự động, vui lòng không trả lời.
-                    </div>
-                </div>
-            </body>
-            </html>
-        `;
-
-        // Gọi hàm gửi mail qua API
+        // Get HTML Template & Send
+        const htmlContent = getResetEmailTemplate(user.full_name, otp);
         console.log("Đang gọi API Brevo...");
         await sendEmailViaBrevo(email, '[TruyenVietHay] Mã xác nhận đặt lại mật khẩu', htmlContent);
-        
-        res.json({ message: 'Mã xác nhận đã được gửi tới email của bạn.' });
 
+        res.json({ message: 'Mã xác nhận đã được gửi tới email của bạn.' });
     } catch (error) {
         console.error("Lỗi forgotPassword:", error);
         res.status(500).json({ message: 'Lỗi hệ thống khi gửi mail.' });
     }
 };
 
-// 2. Đặt lại mật khẩu (Reset)
 exports.resetPassword = async (req, res) => {
     let { email, otp, newPassword } = req.body;
-    
-    // Cắt khoảng trắng thừa để tránh lỗi nhập liệu
     otp = otp ? otp.trim() : '';
     email = email ? email.trim() : '';
 
     try {
-        // Kiểm tra OTP với NOW() của Database
         const [resets] = await db.execute(
             'SELECT * FROM password_resets WHERE email = ? AND otp = ? AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
             [email, otp]
         );
 
-        if (resets.length === 0) {
-            return res.status(400).json({ message: 'Mã xác nhận sai hoặc đã hết hạn!' });
-        }
+        if (resets.length === 0) return res.status(400).json({ message: 'Mã xác nhận sai hoặc đã hết hạn!' });
 
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         await db.execute('UPDATE users SET password = ? WHERE email = ?', [hashedPassword, email]);
-        
-        // Xóa mã OTP đã dùng
         await db.execute('DELETE FROM password_resets WHERE email = ?', [email]);
 
         res.json({ message: 'Đổi mật khẩu thành công!' });
-
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: 'Lỗi server.' });
     }
+};
+
+// Template email đặt lại mật khẩu
+const getResetEmailTemplate = (fullName, otp) => {
+    return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; background-color: #f4f4f7; margin: 0; padding: 0; }
+                .container { max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+                .header { background-color: #1a1a2e; padding: 30px; text-align: center; }
+                .header h1 { color: #ffffff; margin: 0; font-size: 24px; }
+                .content { padding: 40px 30px; color: #333; line-height: 1.6; }
+                .otp-box { background-color: #f0fdf4; border: 2px dashed #16a34a; color: #16a34a; font-size: 32px; font-weight: bold; text-align: center; padding: 15px; margin: 30px 0; letter-spacing: 8px; border-radius: 8px; }
+                .warning { font-size: 13px; color: #666; background-color: #fff7ed; padding: 15px; border-radius: 6px; border-left: 4px solid #f97316; margin-top: 20px; }
+                .footer { background-color: #f9fafb; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header"><h1>TruyenVietHay</h1></div>
+                <div class="content">
+                    <p>Xin chào <strong>${fullName}</strong>,</p>
+                    <p>Chúng tôi nhận được yêu cầu đặt lại mật khẩu. Mã xác nhận của bạn là:</p>
+                    <div class="otp-box">${otp}</div>
+                    <p>Mã này sẽ hết hạn sau <strong>15 phút</strong>.</p>
+                    <div class="warning"><strong>Lưu ý:</strong> Nếu bạn không yêu cầu, vui lòng bỏ qua email này.</div>
+                </div>
+                <div class="footer">&copy; ${new Date().getFullYear()} TruyenVietHay. All rights reserved.</div>
+            </div>
+        </body>
+        </html>
+    `;
 };

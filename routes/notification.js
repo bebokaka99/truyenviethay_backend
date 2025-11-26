@@ -1,9 +1,16 @@
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
-const { getNotifications, markAsRead } = require('../controllers/notificationController');
 
-router.get('/', authMiddleware, getNotifications);
-router.put('/read-all', authMiddleware, markAsRead);
+// Controllers & Middleware
+const notificationController = require('../controllers/notificationController');
+const authMiddleware = require('../middleware/authMiddleware');
+
+// NOTIFICATION ROUTES
+
+// Lấy danh sách thông báo
+router.get('/', authMiddleware, notificationController.getNotifications);
+
+// Đánh dấu tất cả là đã đọc
+router.put('/read-all', authMiddleware, notificationController.markAsRead);
 
 module.exports = router;

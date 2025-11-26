@@ -1,21 +1,30 @@
 const express = require('express');
 const router = express.Router();
+
+// Controllers & Middleware
+const commentController = require('../controllers/commentController');
 const authMiddleware = require('../middleware/authMiddleware');
 const adminMiddleware = require('../middleware/adminMiddleware');
-const { getComments, addComment, toggleLike, 
-    getAllCommentsAdmin, deleteCommentAdmin } = require('../controllers/commentController');
 
-// GET: Lấy bình luận (Thêm param userId để check like status)
-router.get('/:comic_slug', getComments);
+// 1. Public Routes
 
-// POST: Gửi bình luận
-router.post('/', authMiddleware, addComment);
+// Lấy danh sách bình luận (kèm userId query để check like)
+router.get('/:comic_slug', commentController.getComments);
 
-// POST: Like/Unlike
-router.post('/like', authMiddleware, toggleLike);
+// 2. User Routes (Requires Authentication)
 
-// Admin quản lý bình luận
-router.get('/admin/all', authMiddleware, getAllCommentsAdmin);
-router.delete('/admin/:id', authMiddleware, deleteCommentAdmin);
+// Gửi bình luận mới
+router.post('/', authMiddleware, commentController.addComment);
+
+// Thích / Bỏ thích bình luận
+router.post('/like', authMiddleware, commentController.toggleLike);
+
+// 3. Admin Routes (Requires Admin Privileges)
+
+// Lấy tất cả bình luận (Mới nhất)
+router.get('/admin/all', authMiddleware, adminMiddleware, commentController.getAllCommentsAdmin);
+
+// Xóa bình luận bất kỳ (Force delete)
+router.delete('/admin/:id', authMiddleware, adminMiddleware, commentController.deleteCommentAdmin);
 
 module.exports = router;

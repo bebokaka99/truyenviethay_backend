@@ -1,15 +1,21 @@
 const express = require('express');
 const router = express.Router();
+
+// Controllers & Middleware
+const ratingController = require('../controllers/ratingController');
 const authMiddleware = require('../middleware/authMiddleware');
-const { submitRating, getComicRating, getTopRatings } = require('../controllers/ratingController');
 
-// Public: Lấy điểm trung bình truyện
-router.get('/comic/:comic_slug', getComicRating);
+// 1. PUBLIC ROUTES
 
-// Public: Lấy bảng xếp hạng
-router.get('/top', getTopRatings);
+// Lấy điểm trung bình & thông tin đánh giá của truyện
+router.get('/comic/:comic_slug', ratingController.getComicRating);
 
-// Private: Gửi đánh giá
-router.post('/', authMiddleware, submitRating);
+// Lấy bảng xếp hạng (Top truyện được đánh giá cao)
+router.get('/top', ratingController.getTopRatings);
+
+// 2. USER ROUTES (Cần đăng nhập)
+
+// Gửi đánh giá sao
+router.post('/', authMiddleware, ratingController.submitRating);
 
 module.exports = router;

@@ -1,26 +1,25 @@
 const jwt = require('jsonwebtoken');
-const dotenv = require('dotenv');
 
-dotenv.config();
-
-module.exports = function (req, res, next) {
-    // 1. Lấy token từ header (thường gửi dạng: "Bearer <token>")
+module.exports = (req, res, next) => {
+    // Lấy token từ header
     const token = req.header('Authorization');
 
-    // 2. Nếu không có token => Chặn
+    // Kiểm tra nếu không có token
     if (!token) {
-        return res.status(401).json({ message: 'Không có quyền truy cập, vui lòng đăng nhập!' });
+        return res.status(401).json({ message: 'Truy cập bị từ chối. Vui lòng đăng nhập.' });
     }
 
     try {
-        // 3. Giải mã token (Bỏ chữ 'Bearer ' nếu có)
+        // Loại bỏ prefix 'Bearer ' để lấy token gốc
         const cleanToken = token.replace('Bearer ', '');
+        
+        // Giải mã và xác thực
         const decoded = jwt.verify(cleanToken, process.env.JWT_SECRET);
 
-        // 4. Gán thông tin user vào request để bước sau dùng
-        req.user = decoded; 
-        next(); // Cho phép đi tiếp
+        // Gán user vào request
+        req.user = decoded;
+        next();
     } catch (err) {
-        res.status(401).json({ message: 'Token không hợp lệ!' });
+        res.status(401).json({ message: 'Token không hợp lệ hoặc đã hết hạn.' });
     }
 };

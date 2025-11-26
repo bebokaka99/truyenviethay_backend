@@ -1,6 +1,8 @@
 const db = require('../config/db');
 
-// Lấy danh sách thông báo
+// 1. API HANDLERS (Cho Frontend gọi)
+
+// Lấy danh sách thông báo (Limit 20 & đếm số chưa đọc)
 exports.getNotifications = async (req, res) => {
     const userId = req.user.id;
     try {
@@ -14,22 +16,23 @@ exports.getNotifications = async (req, res) => {
         );
         res.json({ items: rows, unread: countRow[0].unread });
     } catch (error) {
+        console.error("Lỗi getNotifications:", error);
         res.status(500).json({ message: 'Lỗi server' });
     }
 };
 
-// Đánh dấu đã đọc
+// Đánh dấu tất cả là đã đọc
 exports.markAsRead = async (req, res) => {
-    const userId = req.user.id;
     try {
-        await db.execute('UPDATE notifications SET is_read = TRUE WHERE user_id = ?', [userId]);
+        await db.execute('UPDATE notifications SET is_read = TRUE WHERE user_id = ?', [req.user.id]);
         res.json({ message: 'Đã đọc hết' });
     } catch (error) {
         res.status(500).json({ message: 'Lỗi server' });
     }
 };
 
-// Hàm nội bộ (QUAN TRỌNG)
+// 2. INTERNAL HELPER (Gọi từ các Controller khác)
+
 exports.createNotificationInternal = async (userId, type, title, message, link = null) => {
     try {
         await db.execute(
@@ -37,6 +40,7 @@ exports.createNotificationInternal = async (userId, type, title, message, link =
             [userId, type, title, message, link]
         );
     } catch (error) {
-        console.error("Lỗi tạo thông báo:", error);
+        // Chỉ log lỗi server, không làm crash luồng chính của user
+        console.error("INTERNAL ERROR - Create Notification:", error);
     }
 };
