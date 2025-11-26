@@ -447,23 +447,29 @@ exports.changeUserRole = async (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
     try {
+        // 1. Parse số nguyên để đảm bảo an toàn (tránh SQL Injection)
         let page = parseInt(req.query.page) || 1;
         let limit = parseInt(req.query.limit) || 10;
+        
         if (limit > 100) limit = 10;
+        if (page < 1) page = 1;
+        
         const offset = (page - 1) * limit;
 
         const [countResult] = await db.execute('SELECT COUNT(*) as total FROM users');
         const totalUsers = countResult[0].total;
         const totalPages = Math.ceil(totalUsers / limit);
 
+        // 2. SỬA LỖI TẠI ĐÂY: 
+        // Đưa trực tiếp biến số vào chuỗi (vì mysql2 prepared statement kén chọn với LIMIT)
         const query = `
             SELECT id, username, email, full_name, avatar, role, status, warnings, ban_expires_at, created_at 
             FROM users 
             ORDER BY created_at DESC 
-            LIMIT ? OFFSET ?
+            LIMIT ${limit} OFFSET ${offset}
         `;
-        // Sử dụng tham số thay vì nối chuỗi để an toàn hơn
-        const [rows] = await db.execute(query, [limit.toString(), offset.toString()]); 
+        
+        const [rows] = await db.execute(query); 
 
         res.json({
             data: rows,
